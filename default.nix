@@ -8,54 +8,41 @@
         overlays.numtide-llms
       ];
   },
-  debug ? false,
 }:
-with {
-  testExtension = ext: ''
-    cp -r ${./extensions}/${ext} "$out/extensions/"
-
-    if [ -f "$out/extensions/${ext}/test-helper.mjs" ]; then
-      patchShebangs "$out/extensions/${ext}/test-helper.mjs"
-      chmod +x "$out/extensions/${ext}/test-helper.mjs"
-    fi
-
-    if [ -f "$out/extensions/${ext}/test-integration.mjs" ]; then
-      patchShebangs "$out/extensions/${ext}/test-integration.mjs"
-      chmod +x "$out/extensions/${ext}/test-integration.mjs"
-    fi
-
-    if [ -f "$out/extensions/${ext}/test-integration-debug.mjs" ]; then
-      patchShebangs "$out/extensions/${ext}/test-integration-debug.mjs"
-      chmod +x "$out/extensions/${ext}/test-integration-debug.mjs"
-    fi
-
-    if [ -f "$out/extensions/${ext}/test-integration-simple.mjs" ]; then
-      patchShebangs "$out/extensions/${ext}/test-integration-simple.mjs"
-      chmod +x "$out/extensions/${ext}/test-integration-simple.mjs"
-    fi
-
-    if [ -f "$out/extensions/${ext}/test-dummy-llm.ts" ]; then
-      chmod +x "$out/extensions/${ext}/test-dummy-llm.ts"
-    fi
-
-    pushd "$out/extensions/${ext}"
-    ${pkgs.writeShellScript "${ext}-test.sh" (
-      builtins.readFile (./extensions + "/${ext}/test.sh")
-    )}
-    popd
-  '';
+with rec {
+  make-extension =
+    ext:
+    with {
+      drv =
+        pkgs.runCommand "pi-extension-${ext}"
+          {
+            buildInputs = with pkgs; [
+              nodejs_20
+              nodePackages.typescript
+              llm-agents.pi
+            ];
+          }
+          ''
+            cp -r "${./extensions}/${ext}" "$out"
+            chmod +w -R "$out"
+            patchShebangs "$out"
+            cd "$out"
+            ./test.sh
+          '';
+    };
+    "${drv}/index.ts";
 };
-pkgs.runCommand "pi-extensions"
-  {
-    buildInputs = with pkgs; [
-      nodejs_20
-      nodePackages.typescript
-      llm-agents.pi
-    ];
-  }
-  ''
-    mkdir -p "$out/extensions"
-    cp ${./README.md} "$out/"
-    cp ${./LICENSE} "$out/"
-    ${pkgs.lib.concatMapStringsSep "\n" testExtension [ "bash-permission" ]}
-  ''
+rec {
+  bash-permission-wrapper = pkgs.writeShellScript "bash-permission-wrapper" ''
+    # TODO: Implement FIFO-based permission checking, only proceed if approved
+    exec "''${SHELL:-${pkgs.bash}/bin/bash}" "$@"
+  '';
+
+  all = pkgs.writeText "pi-all-extensions" (
+    pkgs.lib.concatStringsSep "\n" (builtins.attrValues extensions)
+  );
+
+  extensions = builtins.mapAttrs (name: _: make-extension name) (
+    builtins.readDir ./extensions
+  );
+}

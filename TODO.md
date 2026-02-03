@@ -1,182 +1,213 @@
-# TODO: Pi Extensions Repository
+# TODO
 
-## Phase 1: Setup & Core Extension ✓
+## Problem
 
-**Completed**: Repository setup, bash-permission extension with comprehensive test suite (14 unit tests, 2 integration tests), dummy LLM provider for testing, diagnosis of async blocking issue in pi's extension system.
+Pi's `tool_call` event handlers are async. Tool execution starts before the handler completes, so returning `{ block: true }` is too late to prevent execution.
 
-See `PROJECT_SUMMARY.md` for details.
+Evidence from tests:
+```
+[1770084597048] extension_ui_request: select
+[1770084597048] tool_execution_start: bash rm -rf test.txt  ← Same timestamp!
+```
 
-## Phase 2: Wrapper Script Implementation (IN PROGRESS)
+## Solution: Bash Wrapper with FIFO
 
-### Context
+Give pi a bash wrapper instead of real bash:
 
-Pi's extension events are asynchronous, so `tool_call` handlers cannot block execution reliably. Solution: Use a bash wrapper that creates a FIFO and blocks reading from it. Extension polls for FIFOs and writes decisions to them.
+1. **Wrapper** checks config for pre-allowed/denied commands (fast path)
+2. For unknown commands, wrapper creates FIFO: `/tmp/pi-bash-perm-{sha256}-{pid}.fifo`
+3. Wrapper blocks: `read -t 30 decision < "$FIFO"`
+4. **Extension** polls temp dir for new FIFOs every 100ms
+5. Extension shows UI, writes "allow" or "deny" to FIFO
+6. Wrapper unblocks, executes or denies command
 
-See `WRAPPER_ARCHITECTURE.md` for detailed design.
+### Why FIFO?
 
-### Research Tasks
+- Wrapper blocks in kernel (synchronous, no polling)
+- Built-in timeout: `read -t 30`
+- Self-cleaning: disappears when both ends close
+- Simple: one file instead of request + response
 
-- [ ] **How pi invokes bash**
-  - Test with `pi --mode rpc` to see actual invocation
-  - Check if pi uses `bash` from PATH or hardcoded path
-  - Determine how to make pi use our wrapper
-  - Options: PATH manipulation, tool override, symlink
+### How to Make Pi Use the Wrapper
 
-- [ ] **SHA256 consistency**
-  - Verify bash `sha256sum` and Node.js `crypto` produce identical hashes
-  - Test with edge cases: special chars, newlines, unicode
-  - Command: `echo -n "test" | sha256sum` vs `crypto.createHash('sha256').update('test').digest('hex')`
+**Pi's shell resolution** (from `utils/shell.js`):
+1. Check `shellPath` in `~/.pi/agent/settings.json` ← **USE THIS!**
+2. On Unix: use `/bin/bash` if it exists
+3. Fallback: use `sh`
 
-- [ ] **FIFO behavior on Linux**
-  - Test FIFO creation permissions
-  - Test `read -t` timeout behavior
-  - Test cleanup when process dies
-  - Verify atomic operations
+**Installation approach**:
+```json
+// ~/.pi/agent/settings.json
+{
+  "shellPath": "/nix/store/.../bin/bash-permission-wrapper"
+}
+```
 
-### Wrapper Implementation
+Or: provide a setup command that modifies the settings file automatically.
 
-- [ ] **Create `bash-wrapper.sh`**
-  - Parse bash arguments (handle `-c "command"` format)
-  - Calculate SHA256 of command
-  - Call config checker for pre-allowed/denied commands
-  - Create FIFO with unique name: `/tmp/pi-bash-perm-{hash}-{pid}.fifo`
-  - Block on `read -t 30 decision < "$FIFO"`
-  - Clean up FIFO after read (or timeout)
-  - Execute real bash or deny based on decision
+## Implementation Tasks
 
-- [ ] **Create `check-command.mjs`** (Node.js helper)
+### Research
+
+- [x] **Find how pi invokes bash** ✅
+  - Pi uses `getShellConfig()` from `utils/shell.js`
+  - Resolution order:
+    1. `shellPath` in `~/.pi/agent/settings.json` (USER CONFIGURABLE!)
+    2. On Unix: `/bin/bash` if exists
+    3. Fallback: `sh`
+  - **Solution**: Set `shellPath` to our wrapper in settings.json
+  - **Real bash location**: Can be passed via env var `REAL_BASH` to wrapper
+  - Tested: wrapper intercepts successfully ✅
+
+- [ ] Test SHA256 consistency between bash and Node.js
+  - Bash: `echo -n "cmd" | sha256sum`
+  - Node: `crypto.createHash('sha256').update('cmd').digest('hex')`
+- [ ] Test FIFO: create, read with timeout, cleanup
+
+### Wrapper Script
+
+- [ ] **bash-wrapper.sh**
+  ```bash
+  #!/usr/bin/env bash
+  set -euo pipefail
+  
+  REAL_BASH="/usr/bin/bash"
+  COMMAND="$2"  # from: bash -c "command"
+  
+  # Check config via Node.js helper
+  DECISION=$(node check-command.mjs "$COMMAND")
+  
+  if [[ "$DECISION" == "allow" ]]; then
+    exec "$REAL_BASH" "$@"
+  elif [[ "$DECISION" == "deny" ]]; then
+    echo "Denied: $COMMAND" >&2
+    exit 1
+  fi
+  
+  # Unknown: create FIFO and block
+  HASH=$(echo -n "$COMMAND" | sha256sum | cut -d' ' -f1)
+  FIFO="/tmp/pi-bash-perm-$HASH-$$.fifo"
+  
+  mkfifo "$FIFO"
+  
+  if read -t 30 decision < "$FIFO"; then
+    rm -f "$FIFO"
+    [[ "$decision" == "allow" ]] && exec "$REAL_BASH" "$@"
+    exit 1
+  else
+    rm -f "$FIFO"
+    echo "Timeout: denied" >&2
+    exit 1
+  fi
+  ```
+
+- [ ] **check-command.mjs** (Node.js helper)
   - Read `~/.config/pi/bash-permission.json`
-  - Check exact matches (allowed/denied)
-  - Check prefix matches (allowed/denied)
-  - Return: "allow", "deny", or "unknown"
-  - Share matching logic with main extension (extract to common module?)
-
-- [ ] **Error handling in wrapper**
-  - Config file missing → treat as empty config
-  - Config malformed → deny by default, log error
-  - SHA256 calculation fails → deny by default
-  - mkfifo fails → deny by default
-  - Real bash not found → exit with error
-  - Unexpected decision value → deny
-
-- [ ] **Wrapper testing**
-  - Unit test: config checking with various commands
-  - Integration test: create FIFO, simulate extension writing to it
-  - Test timeout behavior (simulate no extension response)
-  - Test cleanup on normal exit and on signals (SIGINT, SIGTERM)
+  - Check exact matches first (allow/deny)
+  - Check prefix matches second
+  - Return: "allow" | "deny" | "unknown"
 
 ### Extension Updates
 
-- [ ] **Add FIFO monitoring**
-  - Poll temp directory every 100ms for new FIFOs
-  - Pattern: `/tmp/pi-bash-perm-*.fifo`
-  - Track seen FIFOs to avoid duplicate processing
-  - Parse filename to extract hash and PID
+- [ ] Add FIFO polling to extension
+  ```typescript
+  const seenFifos = new Set<string>();
+  
+  setInterval(() => {
+    const files = fs.readdirSync("/tmp");
+    const fifos = files.filter(f => 
+      f.startsWith("pi-bash-perm-") && f.endsWith(".fifo")
+    );
+    
+    for (const fifo of fifos) {
+      if (!seenFifos.has(fifo)) {
+        seenFifos.add(fifo);
+        handleFifo(`/tmp/${fifo}`);
+      }
+    }
+  }, 100);
+  ```
 
-- [ ] **Handle FIFO requests**
-  - When new FIFO detected, show UI dialog
-  - Get user decision (allow/deny)
-  - Write decision to FIFO: `fs.writeFileSync(fifoPath, "allow\n")`
-  - Handle errors (FIFO disappeared, permission denied)
+- [ ] Implement FIFO handler
+  ```typescript
+  async function handleFifo(fifoPath: string) {
+    // Extract hash/PID from filename
+    const match = fifoPath.match(/pi-bash-perm-([a-f0-9]+)-(\d+)\.fifo$/);
+    if (!match) return;
+    
+    const [, hash, pid] = match;
+    
+    // Show UI
+    const choice = await ctx.ui.select(
+      `Allow command? (hash: ${hash.slice(0,16)}...)`,
+      ["❌ Deny once", "✅ Allow once"]
+    );
+    
+    // Write decision
+    const decision = choice?.includes("Allow") ? "allow" : "deny";
+    try {
+      fs.writeFileSync(fifoPath, decision + "\n");
+    } catch (err) {
+      // FIFO might be gone (timeout)
+    }
+  }
+  ```
 
-- [ ] **Stale FIFO cleanup**
-  - On extension startup: scan for stale FIFOs
-  - Check if PID from filename still exists
+- [ ] Add stale FIFO cleanup on startup
+  - Check if PID exists: `kill -0 $PID 2>/dev/null`
   - Remove FIFOs where PID is dead
-  - Optional: periodic cleanup task every 5 minutes
-
-- [ ] **Command tracking** (optional enhancement)
-  - Before wrapper creates FIFO, extension could track command via tool_call event
-  - Store mapping: hash → command
-  - When FIFO appears, look up command by hash for better UI
-  - This avoids showing just "hash: abc123..." in dialog
-
-- [ ] **Configuration updates**
-  - Add `wrapperEnabled` setting (default: true)
-  - Add `wrapperRealBashPath` (default: "/usr/bin/bash")
-  - Add `wrapperTempDir` (default: null = auto-detect)
-  - Add `wrapperTimeout` (default: 30 seconds)
 
 ### Integration
 
-- [ ] **Nix packaging**
-  - Build wrapper with `writeShellScript`
-  - Patch shebangs for wrapper and helper
-  - Install to: `$out/extensions/bash-permission/bash-wrapper`
-  - Install helper to: `$out/extensions/bash-permission/check-command.mjs`
-  - Make both executable
+- [ ] Package wrapper + helper in Nix
+  - Use `writeShellScript` for wrapper
+  - Patch shebangs for Node.js helper
+  - Install to `$out/bin/bash-permission-wrapper`
+  - Install helper to `$out/libexec/bash-permission/check-command.mjs`
 
-- [ ] **Configure pi to use wrapper**
-  - Research: how to override bash tool in pi
-  - Option A: Modify PATH in extension's `session_start`
-  - Option B: Create symlink and modify PATH
-  - Option C: Ask user to configure pi settings
-  - Document the chosen approach
+- [ ] Make pi use wrapper (SOLVED ✅)
+  - User sets `shellPath` in `~/.pi/agent/settings.json`:
+    ```json
+    {
+      "shellPath": "/nix/store/.../bin/bash-permission-wrapper"
+    }
+    ```
+  - Or: create a pi wrapper script that sets it automatically
+  - **Easiest**: User runs post-install command that updates settings.json
 
-- [ ] **Pass real bash path to wrapper**
-  - Detect at runtime: `which bash` before modifying PATH?
-  - Hardcode based on common locations: `/usr/bin/bash`, `/bin/bash`?
-  - Make configurable via environment variable: `REAL_BASH`
-  - Store in config file after first detection
+- [ ] Pass real bash path to wrapper
+  - Wrapper detects: `REAL_BASH="${REAL_BASH:-$(command -v bash)}"`
+  - Or: hardcode in Nix derivation via `substituteInPlace`
+  - Extension installation can set REAL_BASH in settings.json wrapper script
 
 ### Testing
 
-- [ ] **Update integration tests**
-  - Test that denial now actually blocks execution
-  - Test pre-allowed commands (fast path, no FIFO)
-  - Test pre-denied commands (fast path, no FIFO)
-  - Test unknown command with allow (creates FIFO, receives "allow")
-  - Test unknown command with deny (creates FIFO, receives "deny")
-  - Test timeout (wrapper creates FIFO, extension never responds)
-  - Test concurrent requests (multiple wrappers, multiple FIFOs)
+- [ ] Update integration tests
+  - Verify denial now blocks (simulate extension writing to FIFO)
+  - Test pre-configured rules (no FIFO created)
+  - Test timeout (FIFO created, no response)
 
-- [ ] **End-to-end testing**
-  - Run pi with wrapper in interactive mode
-  - Test actual bash commands being blocked/allowed
-  - Verify config persistence works
-  - Test /permissions command
-  - Test with real workloads (not just tests)
+- [ ] Manual testing
+  - Run pi with wrapper
+  - Try dangerous commands, verify blocking works
+  - Test concurrent requests
 
-- [ ] **Test in Nix sandbox**
-  - Ensure wrapper works in isolated environment
-  - Verify temp directory handling
-  - Check that all tests pass via `nix-build`
+- [ ] Edge cases
+  - Wrapper crashes → stale FIFO
+  - Extension crashes → wrapper timeout
+  - Multiple pi instances → PID prevents collisions
 
 ### Documentation
 
-- [ ] **Update `README.md`**
-  - Document wrapper architecture (high-level)
-  - Update installation instructions
-  - Explain configuration options
-  - Remove/update "Known Limitations" section
+- [ ] Update README with wrapper installation
+- [ ] Remove "In Progress" section when complete
+- [ ] Document configuration options
 
-- [ ] **Update `KNOWN_ISSUES.md`**
-  - Mark async issue as "RESOLVED by wrapper approach"
-  - Document any wrapper-specific limitations
-  - Keep original diagnosis for historical reference
+## Completed
 
-- [ ] **Update `TESTING_SUMMARY.md`**
-  - Add wrapper testing section
-  - Show before/after comparison
-  - Document that blocking now works
-
-- [ ] **Simplify documentation**
-  - Remove alternatives (we're doing wrapper)
-  - Remove excessive detail from completed tasks
-  - Focus on what's relevant going forward
-
-## Phase 3: Future Enhancements
-
-- [ ] **Extend to other tools**: Apply wrapper pattern to `write`, `read`, etc.
-- [ ] **Command caching**: Remember recent decisions temporarily to avoid repeated prompts
-- [ ] **Learning mode**: Suggest rules based on user patterns
-- [ ] **Better UI**: Show full command in dialog (requires command tracking)
-- [ ] **Performance optimization**: Use inotify instead of polling (Linux-specific)
-- [ ] **LLM safety analysis**: Ask weak model for command safety summary
-
-## Phase 4: Repository Expansion
-
-- [ ] **Additional extensions**: File protection, git safety, network safety, etc.
-- [ ] **Distribution**: Publish as npm package
-- [ ] **CI/CD**: Automated testing on commits
-- [ ] **Contribution workflow**: Issue templates, PR templates
+- ✅ Extension loads and intercepts bash commands
+- ✅ Pre-configured rules work (exact/prefix, allow/deny)
+- ✅ UI dialogs and config management
+- ✅ 14 unit tests + 2 integration tests
+- ✅ Dummy LLM provider for testing without network
+- ✅ Diagnosed async blocking issue
