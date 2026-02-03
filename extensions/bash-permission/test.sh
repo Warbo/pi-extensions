@@ -1,197 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TAP test output
-test_count=0
 failed=0
 
-tap_ok() {
-	test_count=$((test_count + 1))
-	echo "ok $test_count - $1"
-}
+echo "TAP version 13"
 
-tap_not_ok() {
-	test_count=$((test_count + 1))
-	failed=1
-	echo "not ok $test_count - $1"
-	if [ -n "${2:-}" ]; then
-		echo "  # $2"
-	fi
-}
-
-# Find the test helper script
+# Unit tests - test extension logic without pi
+echo "# Unit tests - extension logic"
 test_helper="./test-helper.mjs"
 
-echo "TAP version 13"
-echo "1..14" # Update this if adding more tests
+tests=(
+	"test-config-empty:Config loading - empty config"
+	"test-config-populated:Config loading - populated config"
+	"test-config-save:Config saving - write and read back"
+	"test-match-exact-allow:Command matching - exact allow"
+	"test-match-exact-deny:Command matching - exact deny"
+	"test-match-prefix-allow:Command matching - prefix allow"
+	"test-match-prefix-deny:Command matching - prefix deny"
+	"test-match-unknown:Command matching - unknown command"
+	"test-priority-exact-deny:Priority order - exact deny over exact allow"
+	"test-priority-exact-allow:Priority order - exact allow over prefix deny"
+	"test-edge-multiline:Edge case - multi-line command matching"
+	"test-edge-pipe:Edge case - piped command matching"
+	"test-edge-escaped:Edge case - escaped characters in command"
+	"test-edge-empty-prefix:Edge case - empty prefix handling"
+)
 
-# Test 1: Config loading with empty config
-test_name="Config loading - empty config"
-if output=$(node "$test_helper" test-config-empty 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
+echo "1..${#tests[@]}"
 
-# Test 2: Config loading with populated config
-test_name="Config loading - populated config"
-if output=$(node "$test_helper" test-config-populated 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 3: Config saving
-test_name="Config saving - write and read back"
-if output=$(node "$test_helper" test-config-save 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 4: Command matching - exact allow
-test_name="Command matching - exact allow"
-if output=$(node "$test_helper" test-match-exact-allow 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 5: Command matching - exact deny
-test_name="Command matching - exact deny"
-if output=$(node "$test_helper" test-match-exact-deny 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 6: Command matching - prefix allow
-test_name="Command matching - prefix allow"
-if output=$(node "$test_helper" test-match-prefix-allow 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 7: Command matching - prefix deny
-test_name="Command matching - prefix deny"
-if output=$(node "$test_helper" test-match-prefix-deny 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 8: Command matching - unknown command
-test_name="Command matching - unknown command"
-if output=$(node "$test_helper" test-match-unknown 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 9: Priority order - exact deny beats exact allow
-test_name="Priority order - exact deny over exact allow"
-if output=$(node "$test_helper" test-priority-exact-deny 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 10: Priority order - exact allow beats prefix deny
-test_name="Priority order - exact allow over prefix deny"
-if output=$(node "$test_helper" test-priority-exact-allow 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 11: Edge case - multi-line command
-test_name="Edge case - multi-line command matching"
-if output=$(node "$test_helper" test-edge-multiline 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 12: Edge case - piped command
-test_name="Edge case - piped command matching"
-if output=$(node "$test_helper" test-edge-pipe 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 13: Edge case - command with escaped characters
-test_name="Edge case - escaped characters in command"
-if output=$(node "$test_helper" test-edge-escaped 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# Test 14: Edge case - empty prefix shouldn't match
-test_name="Edge case - empty prefix handling"
-if output=$(node "$test_helper" test-edge-empty-prefix 2>&1); then
-	tap_ok "$test_name"
-else
-	tap_not_ok "$test_name" "Output: $output"
-fi
-
-# First, run pi settings tests to verify pi's behavior
-echo "# Running pi settings tests..."
-if ! node ./test-pi-settings.mjs 2>&1; then
-	failed=1
-fi
-
-# Before integration tests, clean up any stale wrapper logs
-TEMP_DIR="${TMPDIR:-/tmp}"
-rm -f "$TEMP_DIR"/bash-permission-wrapper-*.log 2>/dev/null || true
-rm -f "$TEMP_DIR"/bash-permission-ext-*.log 2>/dev/null || true
-echo "# Cleaned up old logs"
-
-# Test pi's behavior with different exit codes
-echo "# Testing bash tool with different exit codes..."
-if ! node ./test-bash-exit-codes.mjs 2>&1; then
-	failed=1
-fi
-
-# Narrow down the exact issue
-echo "# Narrowing down wrapper integration issues..."
-if ! node ./test-narrow-down.mjs 2>&1; then
-	failed=1
-fi
-
-# Direct test: is wrapper invoked for rm command?
-echo "# Testing wrapper invocation for rm command..."
-if ! node ./test-wrapper-invocation.mjs 2>&1; then
-	failed=1
-fi
-
-if ! node ./test-integration-simple.mjs 2>&1; then
-	failed=1
-
-	# Dump debug logs if they exist
-	TEMP_DIR="${TMPDIR:-/tmp}"
-	if ls "$TEMP_DIR"/bash-permission-wrapper-*.log >/dev/null 2>&1; then
-		for logfile in "$TEMP_DIR"/bash-permission-wrapper-*.log; do
-			echo "# File: $logfile"
-			cat "$logfile" | sed 's/^/# /'
-		done
+for test_spec in "${tests[@]}"; do
+	test_fn="${test_spec%%:*}"
+	test_name="${test_spec#*:}"
+	
+	if output=$(node "$test_helper" "$test_fn" 2>&1); then
+		echo "ok - $test_name"
 	else
-		echo "# No wrapper logs found"
+		failed=1
+		echo "not ok - $test_name"
+		echo "  # $output"
 	fi
+done
 
-	if ls "$TEMP_DIR"/bash-permission-ext-*.log >/dev/null 2>&1; then
-		for logfile in "$TEMP_DIR"/bash-permission-ext-*.log; do
-			echo "# File: $logfile"
-			cat "$logfile" | sed 's/^/# /'
-		done
-	else
-		echo "# No extension logs found"
-	fi
+# Integration tests - test extension with pi
+echo ""
+echo "# Integration tests - extension with pi"
+if ! node ./test-integration.mjs 2>&1; then
+	failed=1
 fi
 
-if ! ./test-integration.mjs 2>&1; then
+# Blocking tests - verify actual command effects
+echo ""
+echo "# Blocking tests - actual command effects"
+if ! node ./test-blocking.mjs 2>&1; then
 	failed=1
 fi
 

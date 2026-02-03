@@ -13,9 +13,6 @@ let
   piExtensions = import /path/to/this/repo { inherit pkgs; };
 in {
   home.file.".pi/agent/settings.json".text = builtins.toJSON {
-    # Use the bash permission wrapper
-    shellPath = piExtensions.bash-permission-wrapper;
-    
     # Load extensions (pick which ones you want)
     extensions = builtins.attrValues piExtensions.extensions;
     # Or just specific ones:

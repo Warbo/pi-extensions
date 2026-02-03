@@ -9,10 +9,14 @@ let
   piExtensions = import /path/to/repo { inherit pkgs; };
 in {
   home.file.".pi/agent/settings.json".text = builtins.toJSON {
-    shellPath = piExtensions.bash-permission-wrapper;
     extensions = [ piExtensions.extensions.bash-permission ];
   };
 }
+```
+
+Or just copy to your extensions directory:
+```bash
+cp extensions/bash-permission/index.ts ~/.pi/agent/extensions/
 ```
 
 ## Usage
@@ -35,13 +39,11 @@ Config: `~/.config/pi/bash-permission.json`
 
 ```json
 {
-  "rules": [
-    {"command": "ls", "type": "exact", "action": "allow"},
-    {"command": "rm", "type": "prefix", "action": "deny"}
-  ]
+  "allowedExact": ["ls -la", "git status"],
+  "deniedExact": ["rm -rf /"],
+  "allowedPrefixes": ["git "],
+  "deniedPrefixes": ["rm -rf", "sudo "]
 }
 ```
-
-**Types**: `exact` (matches exactly) or `prefix` (starts with)
 
 **Priority**: exact deny > exact allow > prefix deny > prefix allow
