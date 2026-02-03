@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 /**
  * Simple integration test - just verify blocking mechanism works at all
+ * 
+ * NOTE: These tests currently run without the bash-permission-wrapper.
+ * To fully test the blocking mechanism, pi needs to be configured with:
+ *   shellPath: /path/to/bash-permission-wrapper
+ * 
+ * Current tests verify:
+ * - Extension loads and intercepts bash commands
+ * - Extension shows UI for unknown commands
+ * - Extension processes user responses
+ * 
+ * TODO: Add tests that use the wrapper to verify actual blocking
  */
 
 import { spawn } from "node:child_process";

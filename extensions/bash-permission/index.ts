@@ -10,6 +10,7 @@ import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 
 interface Config {
 	// Commands that are always allowed (exact match)
@@ -87,6 +88,34 @@ export default function (pi: ExtensionAPI) {
 		return "unknown";
 	}
 
+	// Write decision to FIFO (polls for FIFO to exist, then writes)
+	async function writeFifoDecision(command: string, decision: "allow" | "deny"): Promise<void> {
+		const hash = crypto.createHash("sha256").update(command).digest("hex");
+		const fifoPath = `/tmp/pi-bash-perm-${hash}.fifo`;
+
+		// Poll for FIFO to exist (wrapper creates it)
+		const maxAttempts = 20; // 2 seconds total
+		const pollInterval = 100; // ms
+		
+		for (let i = 0; i < maxAttempts; i++) {
+			if (fs.existsSync(fifoPath)) {
+				// FIFO exists, write decision
+				try {
+					fs.writeFileSync(fifoPath, decision + "\n");
+					return;
+				} catch (error) {
+					console.error("Failed to write to FIFO:", error);
+					throw error;
+				}
+			}
+			// Wait before next poll
+			await new Promise(resolve => setTimeout(resolve, pollInterval));
+		}
+
+		// Timeout - FIFO never appeared
+		throw new Error(`FIFO not found after ${maxAttempts * pollInterval}ms: ${fifoPath}`);
+	}
+
 	// Load config on session start
 	pi.on("session_start", async (_event, _ctx) => {
 		loadConfig();
@@ -102,27 +131,40 @@ export default function (pi: ExtensionAPI) {
 		const command = event.input.command;
 		const status = checkCommand(command);
 
-		// If denied by saved rule, block immediately
+		let decision: "allow" | "deny";
+
+		// If denied by saved rule, deny immediately
 		if (status === "denied") {
-			return {
-				block: true,
-				reason: "Command denied by saved rule",
-			};
+			decision = "deny";
+			try {
+				await writeFifoDecision(command, decision);
+			} catch (error) {
+				console.error("Failed to write FIFO decision:", error);
+			}
+			return undefined; // Wrapper handles blocking
 		}
 
-		// If allowed by saved rule, let it through
+		// If allowed by saved rule, allow immediately
 		if (status === "allowed") {
+			decision = "allow";
+			try {
+				await writeFifoDecision(command, decision);
+			} catch (error) {
+				console.error("Failed to write FIFO decision:", error);
+			}
 			return undefined;
 		}
 
 		// Unknown command - need to ask user
 		if (!ctx.hasUI) {
-			// No UI available (non-interactive mode)
-			// Deny by default for safety
-			return {
-				block: true,
-				reason: "Command requires confirmation but no UI available (non-interactive mode)",
-			};
+			// No UI available (non-interactive mode) - deny by default
+			decision = "deny";
+			try {
+				await writeFifoDecision(command, decision);
+			} catch (error) {
+				console.error("Failed to write FIFO decision:", error);
+			}
+			return undefined;
 		}
 
 		// Show confirmation dialog
@@ -143,23 +185,25 @@ export default function (pi: ExtensionAPI) {
 		// Handle timeout or escape
 		if (!choice) {
 			ctx.ui.notify("Command denied (timeout/cancelled)", "warning");
-			return {
-				block: true,
-				reason: "User cancelled or timeout",
-			};
+			decision = "deny";
+			try {
+				await writeFifoDecision(command, decision);
+			} catch (error) {
+				console.error("Failed to write FIFO decision:", error);
+			}
+			return undefined;
 		}
 
 		switch (choice) {
 			case "❌ Deny once":
 				ctx.ui.notify("Command denied", "info");
-				return {
-					block: true,
-					reason: "User denied (one-time)",
-				};
+				decision = "deny";
+				break;
 
 			case "✅ Allow once":
 				ctx.ui.notify("Command allowed (one-time)", "info");
-				return undefined;
+				decision = "allow";
+				break;
 
 			case "🚫 Deny prefix": {
 				const prefix = await ctx.ui.input(
@@ -171,17 +215,16 @@ export default function (pi: ExtensionAPI) {
 					saveConfig();
 					ctx.ui.notify(`Prefix denied and saved: "${prefix}"`, "success");
 				}
-				return {
-					block: true,
-					reason: "User denied with prefix rule",
-				};
+				decision = "deny";
+				break;
 			}
 
 			case "✓ Allow exact":
 				config.allowedExact.push(command);
 				saveConfig();
 				ctx.ui.notify("Command allowed and saved (exact match)", "success");
-				return undefined;
+				decision = "allow";
+				break;
 
 			case "✓✓ Allow prefix": {
 				const prefix = await ctx.ui.input(
@@ -192,23 +235,28 @@ export default function (pi: ExtensionAPI) {
 					config.allowedPrefixes.push(prefix);
 					saveConfig();
 					ctx.ui.notify(`Prefix allowed and saved: "${prefix}"`, "success");
+					decision = "allow";
 				} else {
 					// User cancelled prefix input, deny the command
-					return {
-						block: true,
-						reason: "User cancelled prefix input",
-					};
+					decision = "deny";
 				}
-				return undefined;
+				break;
 			}
 
 			default:
 				// Should never happen, but deny by default
-				return {
-					block: true,
-					reason: "Unknown choice",
-				};
+				decision = "deny";
+				break;
 		}
+
+		// Write decision to FIFO
+		try {
+			await writeFifoDecision(command, decision);
+		} catch (error) {
+			console.error("Failed to write FIFO decision:", error);
+		}
+
+		return undefined; // Wrapper handles blocking
 	});
 
 	// Register a command to view/manage permissions
