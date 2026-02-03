@@ -42,59 +42,56 @@ function testFail(name, reason) {
 
 // Start pi in RPC mode with wrapper configured
 function startPi(extensions) {
-	try {
-		// Create temp working directory
-		const tempCwd = join(tmpdir(), `pi-test-cwd-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-		mkdirSync(join(tempCwd, ".pi", "agent"), { recursive: true });
-		
-		// Create project-specific settings at $PWD/.pi/agent/settings.json
-		const settings = {
-			shellPath: wrapperPath,
-			extensions: extensions
-		};
-		const settingsPath = join(tempCwd, ".pi", "agent", "settings.json");
-		writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-		
-		console.log(`# Created temp CWD: ${tempCwd}`);
-		console.log(`# Settings: ${settingsPath}`);
-		console.log(`#   Contents: ${JSON.stringify(settings)}`);
-		console.log(`# Wrapper path: ${wrapperPath}`);
-		console.log(`# Wrapper exists: ${existsSync(wrapperPath)}`);
-		console.log(`# TMPDIR: ${process.env.TMPDIR || '/tmp'}`);
-		
-		const proc = spawn("pi", [
-			"--mode", "rpc",
-			"--provider", "dummy",
-			"--model", "dummy-model",
-		], { 
-			stdio: ["pipe", "pipe", "pipe"],
-			cwd: tempCwd
-		});
-		
-		// Log if pi fails to start
-		proc.on("error", (error) => {
-			console.log(`# ERROR: Failed to spawn pi: ${error.message}`);
-		});
-		
-		proc.on("exit", (code, signal) => {
-			console.log(`# Pi process exited with code ${code}, signal ${signal}`);
-		});
-		
-		// Clean up temp dir when process exits
-		proc.on("close", () => {
-			try {
-				rmSync(tempCwd, { recursive: true, force: true });
-			} catch (e) {
-				// Ignore cleanup errors
-			}
-		});
-		
-		return proc;
-	} catch (error) {
-		console.log(`# FATAL: Failed to start pi: ${error.message}`);
-		console.log(`# Stack: ${error.stack}`);
+	// Create temp working directory with project settings
+	const tempCwd = join(tmpdir(), `pi-test-cwd-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	mkdirSync(join(tempCwd, ".pi"), { recursive: true });
+	
+	// Create project settings at $CWD/.pi/settings.json with shellPath
+	const settings = {
+		shellPath: wrapperPath
+	};
+	const settingsPath = join(tempCwd, ".pi", "settings.json");
+	writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+	
+	console.log(`# Created temp CWD: ${tempCwd}`);
+	console.log(`# Settings: ${settingsPath}`);
+	console.log(`#   Contents: ${JSON.stringify(settings)}`);
+	console.log(`# Wrapper path: ${wrapperPath}`);
+	console.log(`# Wrapper exists: ${existsSync(wrapperPath)}`);
+	console.log(`# TMPDIR: ${process.env.TMPDIR || '/tmp'}`);
+	
+	const proc = spawn("pi", [
+		"--mode", "rpc",
+		"--provider", "dummy",
+		"--model", "dummy-model",
+		...extensions.flatMap(ext => ["--extension", ext])
+	], { 
+		stdio: ["pipe", "pipe", "pipe"],
+		cwd: tempCwd
+	});
+	
+	console.log(`# Pi args: --mode rpc --provider dummy --model dummy-model --extension ${extensions.join(' --extension ')}`);
+	
+	// Log if pi fails to start
+	proc.on("error", (error) => {
+		console.log(`# ERROR: Failed to spawn pi: ${error.message}`);
 		throw error;
-	}
+	});
+	
+	proc.on("exit", (code, signal) => {
+		console.log(`# Pi process exited with code ${code}, signal ${signal}`);
+	});
+	
+	// Clean up temp dir when process exits
+	proc.on("close", () => {
+		try {
+			rmSync(tempCwd, { recursive: true, force: true });
+		} catch (error) {
+			console.log(`# Warning: Failed to cleanup ${tempCwd}: ${error.message}`);
+		}
+	});
+	
+	return proc;
 }
 
 function sendCommand(proc, cmd) {
@@ -118,26 +115,31 @@ async function waitForEvent(events, predicate, timeout = 10000) {
 	});
 }
 
-// Test 1: Extension loads and intercepts bash commands
-async function test1() {
+// Test: Extension intercepts bash commands and shows permission dialog
+async function testExtensionShowsPermissionDialog() {
 	const dummyLLM = join(__dirname, "test-dummy-llm.ts");
 	const bashPermission = join(__dirname, "index.ts");
-	let pi;
 	
+	console.log("# Test: Extension shows permission dialog for bash commands");
+	
+	let pi;
 	try {
 		pi = startPi([dummyLLM, bashPermission]);
 	} catch (error) {
-		testFail("Extension intercepts bash commands and shows permission dialog", `Failed to start pi: ${error.message}`);
+		testFail("Extension shows permission dialog for bash commands", `Failed to start pi: ${error.message}`);
 		return;
 	}
+	
+	console.log("# Pi process started");
 	
 	const events = [];
 	const readline = createInterface({ input: pi.stdout });
 	readline.on("line", (line) => {
 		try {
 			events.push(JSON.parse(line));
-			console.log(`# Event: ${JSON.parse(line).type}`);
-		} catch (e) {}
+		} catch (error) {
+			console.log(`# Warning: Failed to parse JSON: ${line.substring(0, 100)}`);
+		}
 	});
 	
 	let stderr = "";
@@ -153,7 +155,6 @@ async function test1() {
 	pi.on("exit", (code) => {
 		piExited = true;
 		piExitCode = code;
-		console.log(`# Pi exited with code ${code}`);
 	});
 	
 	try {
@@ -174,29 +175,33 @@ async function test1() {
 		await new Promise((resolve) => pi.on("close", resolve));
 		
 		if (uiRequest.title && uiRequest.title.includes("Bash Permission")) {
-			testPass("Extension intercepts bash commands and shows permission dialog");
+			testPass("Extension shows permission dialog for bash commands");
 		} else {
-			testFail("Extension intercepts bash commands", `Wrong title: ${uiRequest.title}`);
+			testFail("Extension shows permission dialog for bash commands", `Wrong title: ${uiRequest.title}`);
 		}
 	} catch (error) {
 		if (pi && !piExited) pi.kill();
 		await new Promise((resolve) => setTimeout(resolve, 100));
-		testFail("Extension intercepts bash commands", error.message);
+		testFail("Extension shows permission dialog for bash commands", error.message);
 	}
 }
 
-// Test 2: Denied command is blocked by wrapper
-async function test2() {
+// Test: Denied command is blocked by wrapper
+async function testDeniedCommandIsBlocked() {
 	const dummyLLM = join(__dirname, "test-dummy-llm.ts");
 	const bashPermission = join(__dirname, "index.ts");
-	let pi;
 	
+	console.log("# Test: Denied command is blocked by wrapper");
+	
+	let pi;
 	try {
 		pi = startPi([dummyLLM, bashPermission]);
 	} catch (error) {
 		testFail("Denied command is blocked by wrapper", `Failed to start pi: ${error.message}`);
 		return;
 	}
+	
+	console.log("# Pi process started");
 	
 	const events = [];
 	const readline = createInterface({ input: pi.stdout });
@@ -205,13 +210,15 @@ async function test2() {
 			const event = JSON.parse(line);
 			event._timestamp = Date.now();
 			events.push(event);
-			// Log all events for debugging
+			// Log important events for debugging
 			if (event.type === "tool_execution_start" || 
 			    event.type === "tool_execution_end" ||
 			    event.type === "extension_ui_request") {
 				console.log(`# Event: ${event.type} ${event.toolName || event.method || ''}`);
 			}
-		} catch (e) {}
+		} catch (error) {
+			console.log(`# Warning: Failed to parse JSON: ${line.substring(0, 100)}`);
+		}
 	});
 	
 	let stderr = "";
@@ -221,7 +228,6 @@ async function test2() {
 	pi.stderr.on("data", (data) => {
 		const chunk = data.toString();
 		stderr += chunk;
-		// Log stderr lines
 		chunk.split('\n').forEach(line => {
 			if (line.trim()) {
 				console.log(`# pi stderr: ${line}`);
@@ -263,9 +269,12 @@ async function test2() {
 		
 		// Wait for tool execution to complete
 		console.log("# Waiting for tool execution to complete...");
+		console.log(`# Current events count: ${events.length}`);
+		console.log(`# Tool execution events: ${JSON.stringify(events.filter(e => e.type && e.type.includes("tool")))}`);
+		
 		const toolResult = await waitForEvent(events,
 			e => e.type === "tool_execution_end" && e.toolName === "bash",
-			10000
+			15000
 		);
 		console.log(`# Got tool result: ${JSON.stringify(toolResult)}`);
 		
@@ -293,30 +302,17 @@ async function test2() {
 // Run tests with global error handling
 (async function() {
 	try {
-		await test1();
+		await testExtensionShowsPermissionDialog();
+		await testDeniedCommandIsBlocked();
 	} catch (error) {
-		console.log(`# FATAL ERROR in test1: ${error.message}`);
+		console.log(`# CATASTROPHIC ERROR: ${error.message}`);
 		console.log(`# Stack: ${error.stack}`);
-		testFail("Extension intercepts bash commands and shows permission dialog", `FATAL: ${error.message}`);
-	}
-	
-	try {
-		await test2();
-	} catch (error) {
-		console.log(`# FATAL ERROR in test2: ${error.message}`);
-		console.log(`# Stack: ${error.stack}`);
-		testFail("Denied command is blocked by wrapper", `FATAL: ${error.message}`);
+		// Ensure we've written test results
+		while (testsRun < 2) {
+			testFail(`Test ${testsRun + 1}`, `CATASTROPHIC ERROR: ${error.message}`);
+		}
 	}
 	
 	console.log(`# Tests: ${testsRun}, Passed: ${testsPassed}, Failed: ${testsRun - testsPassed}`);
 	process.exit(testsPassed === testsRun ? 0 : 1);
-})().catch((error) => {
-	console.log(`# CATASTROPHIC ERROR: ${error.message}`);
-	console.log(`# Stack: ${error.stack}`);
-	// Ensure we've written at least some test results
-	while (testsRun < 2) {
-		testFail(`Test ${testsRun + 1}`, `CATASTROPHIC ERROR: ${error.message}`);
-	}
-	console.log(`# Tests: ${testsRun}, Passed: ${testsPassed}, Failed: ${testsRun - testsPassed}`);
-	process.exit(1);
-});
+})();

@@ -60,23 +60,72 @@ with rec {
 
     log "Using temp dir: $TEMP_DIR"
 
-    # Create FIFO for communication, based on hash of command
+    # Find pi's PID by traversing process tree
+    find_pi_pid() {
+      local pid=$PPID
+      log "Starting process tree walk from PPID=$pid"
+      
+      while [ "$pid" != "1" ] && [ "$pid" != "0" ]; do
+        # Check if this process exists
+        if [ ! -d "/proc/$pid" ]; then
+          log "Process $pid does not exist, stopping search"
+          break
+        fi
+        
+        # Get process name and command line
+        local comm=$(cat /proc/$pid/comm 2>/dev/null || echo "")
+        local cmdline=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null || echo "")
+        
+        log "Checking PID $pid: comm='$comm', cmdline='$cmdline'"
+        
+        # Check if this is a node process running pi
+        if [ "$comm" = "node" ]; then
+          log "Found node process at PID $pid"
+          # Check if it's running pi
+          if echo "$cmdline" | grep -q "pi"; then
+            log "Found pi process at PID $pid"
+            echo "$pid"
+            return 0
+          fi
+        fi
+        
+        # Move to parent process
+        local parent_pid=$(cut -d' ' -f4 /proc/$pid/stat 2>/dev/null || echo "1")
+        log "Moving to parent PID $parent_pid"
+        pid=$parent_pid
+      done
+      
+      # Fallback: couldn't find pi, use wrapper's PID
+      log "WARNING: Could not find pi process, falling back to wrapper PID $$"
+      echo "$$"
+    }
+
+    PI_PID=$(find_pi_pid)
+    log "Using pi PID: $PI_PID"
+
+    # Create FIFO name with pi's PID and command hash
     HASH=$(printf '%s' "$COMMAND" | sha256sum | cut -d' ' -f1)
-    FIFO="$TEMP_DIR/pi-bash-perm-$HASH.fifo"
+    FIFO="$TEMP_DIR/pi-bash-perm-$PI_PID-$HASH.fifo"
     log "FIFO path: $FIFO"
     log "Hash: $HASH"
 
+    # Create FIFO - check if it already exists (retry scenario)
     if [ -e "$FIFO" ]; then
-      log "FIFO already exists, waiting..."
+      log "FIFO already exists, waiting for it to be ready..."
+      # Wait a bit for the previous operation to complete
       sleep 0.1
       if [ -e "$FIFO" ]; then
-        log "ERROR: FIFO collision"
+        log "ERROR: FIFO still exists after wait, collision detected"
         echo "bash-permission: FIFO collision, command denied '$COMMAND'" >&2
         exit 1
       fi
     fi
 
-    mkfifo "$FIFO"
+    if ! mkfifo "$FIFO" 2>/dev/null; then
+      log "ERROR: Failed to create FIFO"
+      echo "bash-permission: Failed to create FIFO, command denied '$COMMAND'" >&2
+      exit 1
+    fi
     log "FIFO created successfully"
     trap "rm -f '$FIFO'; log 'FIFO cleanup'" EXIT
 

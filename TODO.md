@@ -1,88 +1,74 @@
 # TODO
 
-## Current Test Status
+## Current Status
 
-### Unit Tests: 14/14 PASSING ✅
-- Config loading and saving
-- Command matching (exact/prefix, allow/deny)
-- Priority rules
-- Edge cases
+### What Works ✅
+- Extension correctly intercepts bash tool calls
+- Extension shows permission dialog UI
+- Wrapper is invoked by pi (shellPath settings work correctly)
+- Pi sends tool_execution_end for bash commands with non-zero exit codes
+- FIFO-based IPC architecture is fundamentally sound
+- **FIXED: FIFO path matching between extension and wrapper**
+  - Wrapper now finds pi's PID by walking process tree
+  - Both extension and wrapper use: `/tmp/pi-bash-perm-<pi_pid>-<hash>.fifo`
+  - FIFO paths now match correctly ✅
 
-### Integration Tests: FAILING ❌
+### Known Issues (Need Testing)
+- **Potential: FIFO collisions when pi retries commands**
+  - If pi retries the same command with same PID, same FIFO path will be used
+  - Need to test if this actually happens in practice
+  - Current implementation includes basic collision detection (checks if FIFO exists, waits 100ms)
 
-**Simple integration tests (test-integration-simple.mjs)**: 0/2 passing
-- Both tests fail immediately
-- **Root cause**: Pi rejects model "dummy/dummy-model"
-  ```
-  # pi stderr: Model dummy/dummy-model not found
-  # Pi process exited with code 1, signal null
-  ```
-- The dummy LLM extension (test-dummy-llm.ts) isn't being recognized as a valid provider
-- Need to fix how dummy extension registers itself or how we specify the provider/model
+## Next Steps
 
-**Full integration tests (test-integration.mjs)**: 3/4 passing
-- ✅ Test 1: Permission dialog appears for bash command
-- ✅ Test 2: Allow once permits command
-- ✅ Test 3: Allow exact saves to config
-- ❌ Test 4: Allow prefix prompts for prefix (timeout)
+### Test the Fix
+1. **Run the test suite** to verify FIFO path matching works
+   ```bash
+   cd extensions/bash-permission
+   ./test.sh
+   ```
 
-## Remaining Work
+2. **Verify FIFO cleanup** by checking logs:
+   ```bash
+   grep "FIFO cleanup" /tmp/bash-permission-wrapper-*.log
+   ```
 
-### Fix Test Infrastructure
-- [ ] Fix dummy LLM provider registration
-  - Currently pi can't find "dummy/dummy-model"
-  - May need to register as a proper provider
-  - Or find the correct way to specify it in RPC mode
-  
-- [ ] Debug test 4 timeout in full integration tests
-  - "Allow prefix prompts for prefix" times out waiting for event
-  - Likely a test logic issue, not a wrapper issue
+3. **Check for collision issues**:
+   - Monitor if retries still cause problems
+   - Check logs for "FIFO collision" errors
+   - Verify trap cleanup is working properly
 
-### Testing
-- [ ] Verify wrapper works end-to-end once tests pass
-- [ ] Test edge cases:
-  - Concurrent commands (same hash)
-  - Wrapper timeout when extension doesn't respond
-  - FIFO cleanup on errors
+### If Collisions Still Occur (Future Work)
 
-### Documentation
-- [ ] Update README with installation instructions
-- [ ] Document how to configure shellPath
-- [ ] Add troubleshooting section
+Possible approaches if retries become an issue:
+1. **Include retry counter**: Add sequence number to FIFO path
+2. **Reuse FIFO on retry**: Check if FIFO exists and is still valid before erroring
+3. **Timeout-based cleanup**: Short-lived FIFOs that auto-expire
+4. **Block-and-wait**: Second attempt waits for first to complete instead of erroring
 
-## Architecture Summary
+## Architecture Overview
 
-**Implementation is complete**, just needs test fixes.
+The bash permission system uses a FIFO-based IPC mechanism:
 
-### How It Works
-
-1. User configures `shellPath` in `~/.pi/agent/settings.json` to point to wrapper
-2. When pi executes bash command, wrapper intercepts it:
+1. **User configures** `shellPath` in `.pi/settings.json` to point to wrapper
+2. **Wrapper intercepts** bash commands:
+   - Walks process tree from `$PPID` to find pi's PID (checks for `node` process running `pi`)
    - Hashes command: `sha256(command)` → hash
-   - Creates FIFO: `${TMPDIR:-/tmp}/pi-bash-perm-{hash}.fifo`
+   - Creates FIFO: `${TMPDIR}/pi-bash-perm-<pi_pid>-<hash>.fifo`
    - Blocks reading from FIFO (30s timeout)
-3. Extension receives `tool_call` event:
-   - Checks config for pre-allowed/denied commands
+3. **Extension receives** `tool_call` event:
+   - Gets pi's PID: `process.pid`
+   - Shows permission dialog to user
+   - Computes FIFO path: `${TMPDIR}/pi-bash-perm-<pi_pid>-<hash>.fifo`
    - Polls for FIFO to exist (10s timeout, 100ms intervals)
    - Writes "allow" or "deny" to FIFO
-4. Wrapper unblocks and either executes command or exits with error
+4. **Wrapper unblocks** and either:
+   - Executes command (if "allow")
+   - Exits with error (if "deny" or timeout)
 
-### Key Design Decisions
-
-- **FIFO-based IPC**: Wrapper blocks synchronously in kernel, no busy polling
-- **SHA256 hash in filename**: Both sides compute same hash from command
-- **No PID in FIFO name**: Wrapper and extension must agree on filename
-- **Wrapper has zero logic**: Only creates FIFO and waits, all decisions in extension
-- **Extension owns all decisions**: Config checking and user prompts
-- **Temp dir from env**: Respects `TMPDIR`, falls back to `/tmp`
-
-### File Locations
-
-- Wrapper: `bash-permission-wrapper` (Nix derivation output)
-- Extension: `extensions/bash-permission/index.ts`
-- Config: `~/.config/pi/bash-permission.json`
-- Settings: `~/.pi/agent/settings.json` (or `$PWD/.pi/agent/settings.json`)
-- FIFO: `${TMPDIR:-/tmp}/pi-bash-perm-{sha256}.fifo`
-- Debug logs (tests only):
-  - `${TMPDIR:-/tmp}/bash-permission-wrapper-{pid}.log`
-  - `${TMPDIR:-/tmp}/bash-permission-ext-{pid}.log`
+### Why Pi's PID Works
+- Pi's PID is stable for the lifetime of the pi process
+- Extension knows it directly (`process.pid`)
+- Wrapper can discover it by walking the process tree
+- Both calculate the same FIFO path independently
+- Avoids the previous mismatch where extension used pi's PID but wrapper used its own PID

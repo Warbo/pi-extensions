@@ -137,6 +137,36 @@ else
 	tap_not_ok "$test_name" "Output: $output"
 fi
 
+# First, run pi settings tests to verify pi's behavior
+echo "# Running pi settings tests..."
+if ! node ./test-pi-settings.mjs 2>&1; then
+	failed=1
+fi
+
+# Before integration tests, clean up any stale wrapper logs
+TEMP_DIR="${TMPDIR:-/tmp}"
+rm -f "$TEMP_DIR"/bash-permission-wrapper-*.log 2>/dev/null || true
+rm -f "$TEMP_DIR"/bash-permission-ext-*.log 2>/dev/null || true
+echo "# Cleaned up old logs"
+
+# Test pi's behavior with different exit codes
+echo "# Testing bash tool with different exit codes..."
+if ! node ./test-bash-exit-codes.mjs 2>&1; then
+	failed=1
+fi
+
+# Narrow down the exact issue
+echo "# Narrowing down wrapper integration issues..."
+if ! node ./test-narrow-down.mjs 2>&1; then
+	failed=1
+fi
+
+# Direct test: is wrapper invoked for rm command?
+echo "# Testing wrapper invocation for rm command..."
+if ! node ./test-wrapper-invocation.mjs 2>&1; then
+	failed=1
+fi
+
 if ! node ./test-integration-simple.mjs 2>&1; then
 	failed=1
 

@@ -106,11 +106,15 @@ export default function (pi: ExtensionAPI) {
 		
 		// Use standard temp directory (respect TMPDIR, fall back to /tmp)
 		const tempDir = process.env.TMPDIR || "/tmp";
-		const fifoPath = `${tempDir}/pi-bash-perm-${hash}.fifo`;
+		
+		// Use pi's PID (this process) to construct FIFO path
+		const piPid = process.pid;
+		const fifoPath = path.join(tempDir, `pi-bash-perm-${piPid}-${hash}.fifo`);
 
 		log(`writeFifoDecision: command="${command}", decision="${decision}"`);
 		log(`writeFifoDecision: hash=${hash}`);
 		log(`writeFifoDecision: tempDir=${tempDir}`);
+		log(`writeFifoDecision: piPid=${piPid}`);
 		log(`writeFifoDecision: fifoPath=${fifoPath}`);
 		log(`writeFifoDecision: Starting poll...`);
 
@@ -120,25 +124,30 @@ export default function (pi: ExtensionAPI) {
 		const pollInterval = 100; // ms
 		
 		for (let i = 0; i < maxAttempts; i++) {
-			if (fs.existsSync(fifoPath)) {
-				// FIFO exists, write decision
-				log(`writeFifoDecision: Found FIFO after ${i * pollInterval}ms`);
-				try {
-					fs.writeFileSync(fifoPath, decision + "\n");
-					log(`writeFifoDecision: Successfully wrote decision`);
-					return;
-				} catch (error) {
-					log(`writeFifoDecision: Failed to write: ${error}`);
-					throw error;
+			try {
+				// Check if FIFO exists
+				if (fs.existsSync(fifoPath)) {
+					log(`writeFifoDecision: Found FIFO after ${i * pollInterval}ms: ${fifoPath}`);
+					try {
+						fs.writeFileSync(fifoPath, decision + "\n");
+						log(`writeFifoDecision: Successfully wrote decision`);
+						return;
+					} catch (error) {
+						log(`writeFifoDecision: Failed to write: ${error}`);
+						throw error;
+					}
 				}
+			} catch (error) {
+				log(`writeFifoDecision: Error checking for FIFO: ${error}`);
 			}
+			
 			// Wait before next poll
 			await new Promise(resolve => setTimeout(resolve, pollInterval));
 		}
 
 		// Timeout - FIFO never appeared
 		log(`writeFifoDecision: TIMEOUT - FIFO not found after ${maxAttempts * pollInterval}ms`);
-		throw new Error(`FIFO not found after ${maxAttempts * pollInterval}ms: ${fifoPath}`);
+		throw new Error(`FIFO not found after ${maxAttempts * pollInterval}ms at path: ${fifoPath}`);
 	}
 
 	// Load config on session start
