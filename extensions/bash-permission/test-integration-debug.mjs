@@ -8,11 +8,32 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Start pi in RPC mode with extensions
+// Get wrapper path from environment (set by Nix during tests)
+const wrapperPath = process.env.bashPermissionWrapper;
+if (!wrapperPath) {
+	console.error("FATAL: bashPermissionWrapper environment variable not set");
+	console.error("These tests must be run through Nix, not directly");
+	process.exit(1);
+}
+
+// Start pi in RPC mode with extensions and wrapper configured
 function startPi(extensions) {
+	// Create temp directory with .pi/settings.json
+	const tempDir = join(tmpdir(), `pi-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	mkdirSync(tempDir, { recursive: true });
+	mkdirSync(join(tempDir, ".pi"), { recursive: true });
+	
+	// Create settings.json with shellPath pointing to wrapper
+	const settings = {
+		shellPath: wrapperPath
+	};
+	writeFileSync(join(tempDir, ".pi", "settings.json"), JSON.stringify(settings, null, 2));
+	
 	const args = [
 		"--mode", "rpc",
 		"--no-session",
@@ -24,9 +45,21 @@ function startPi(extensions) {
 		args.push("-e", ext);
 	}
 	
-	return spawn("pi", args, {
+	const proc = spawn("pi", args, {
 		stdio: ["pipe", "pipe", "pipe"],
+		cwd: tempDir
 	});
+	
+	// Clean up temp dir when process exits
+	proc.on("close", () => {
+		try {
+			rmSync(tempDir, { recursive: true, force: true });
+		} catch (e) {
+			// Ignore cleanup errors
+		}
+	});
+	
+	return proc;
 }
 
 // Send JSON command to pi

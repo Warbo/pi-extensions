@@ -3,18 +3,16 @@ set -euo pipefail
 
 # TAP test output
 test_count=0
-passed=0
 failed=0
 
 tap_ok() {
 	test_count=$((test_count + 1))
-	passed=$((passed + 1))
 	echo "ok $test_count - $1"
 }
 
 tap_not_ok() {
 	test_count=$((test_count + 1))
-	failed=$((failed + 1))
+	failed=1
 	echo "not ok $test_count - $1"
 	if [ -n "${2:-}" ]; then
 		echo "  # $2"
@@ -139,26 +137,34 @@ else
 	tap_not_ok "$test_name" "Output: $output"
 fi
 
-# Integration tests (if pi is available)
-if command -v pi >/dev/null 2>&1; then
-	echo "# Running simple integration tests with pi..."
-	# Run with node directly to avoid shebang issues in Nix
-	if ! node ./test-integration-simple.mjs 2>&1; then
-		echo "# Warning: Simple integration tests failed"
-		# Don't fail the build for integration tests yet
+if ! node ./test-integration-simple.mjs 2>&1; then
+	failed=1
+
+	# Dump debug logs if they exist
+	TEMP_DIR="${TMPDIR:-/tmp}"
+	if ls "$TEMP_DIR"/bash-permission-wrapper-*.log >/dev/null 2>&1; then
+		for logfile in "$TEMP_DIR"/bash-permission-wrapper-*.log; do
+			echo "# File: $logfile"
+			cat "$logfile" | sed 's/^/# /'
+		done
+	else
+		echo "# No wrapper logs found"
 	fi
-	
-	# Optional: run full integration tests
-	# echo "# Running full integration tests with pi..."
-	# if ! ./test-integration.mjs 2>&1; then
-	# 	echo "# Warning: Full integration tests failed"
-	# fi
-else
-	echo "# Skipping integration tests (pi not available)"
+
+	if ls "$TEMP_DIR"/bash-permission-ext-*.log >/dev/null 2>&1; then
+		for logfile in "$TEMP_DIR"/bash-permission-ext-*.log; do
+			echo "# File: $logfile"
+			cat "$logfile" | sed 's/^/# /'
+		done
+	else
+		echo "# No extension logs found"
+	fi
 fi
 
-# Summary
-echo "# Tests: $test_count, Passed: $passed, Failed: $failed"
+if ! ./test-integration.mjs 2>&1; then
+	failed=1
+fi
+
 if [ "$failed" -gt 0 ]; then
 	exit 1
 fi

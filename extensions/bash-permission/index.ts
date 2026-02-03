@@ -36,6 +36,18 @@ const DEFAULT_CONFIG: Config = {
 export default function (pi: ExtensionAPI) {
 	const configPath = path.join(os.homedir(), ".config", "pi", "bash-permission.json");
 	let config: Config = { ...DEFAULT_CONFIG };
+	
+	// Debug logging to file
+	const tempDir = process.env.TMPDIR || "/tmp";
+	const logFile = path.join(tempDir, `bash-permission-ext-${process.pid}.log`);
+	function log(message: string): void {
+		try {
+			const timestamp = Date.now();
+			fs.appendFileSync(logFile, `[${timestamp}] [${process.pid}] ${message}\n`);
+		} catch (e) {
+			// Ignore logging errors
+		}
+	}
 
 	// Load config on startup
 	function loadConfig(): void {
@@ -91,20 +103,32 @@ export default function (pi: ExtensionAPI) {
 	// Write decision to FIFO (polls for FIFO to exist, then writes)
 	async function writeFifoDecision(command: string, decision: "allow" | "deny"): Promise<void> {
 		const hash = crypto.createHash("sha256").update(command).digest("hex");
-		const fifoPath = `/tmp/pi-bash-perm-${hash}.fifo`;
+		
+		// Use standard temp directory (respect TMPDIR, fall back to /tmp)
+		const tempDir = process.env.TMPDIR || "/tmp";
+		const fifoPath = `${tempDir}/pi-bash-perm-${hash}.fifo`;
+
+		log(`writeFifoDecision: command="${command}", decision="${decision}"`);
+		log(`writeFifoDecision: hash=${hash}`);
+		log(`writeFifoDecision: tempDir=${tempDir}`);
+		log(`writeFifoDecision: fifoPath=${fifoPath}`);
+		log(`writeFifoDecision: Starting poll...`);
 
 		// Poll for FIFO to exist (wrapper creates it)
-		const maxAttempts = 20; // 2 seconds total
+		// Need longer timeout because wrapper spawns asynchronously
+		const maxAttempts = 100; // 10 seconds total
 		const pollInterval = 100; // ms
 		
 		for (let i = 0; i < maxAttempts; i++) {
 			if (fs.existsSync(fifoPath)) {
 				// FIFO exists, write decision
+				log(`writeFifoDecision: Found FIFO after ${i * pollInterval}ms`);
 				try {
 					fs.writeFileSync(fifoPath, decision + "\n");
+					log(`writeFifoDecision: Successfully wrote decision`);
 					return;
 				} catch (error) {
-					console.error("Failed to write to FIFO:", error);
+					log(`writeFifoDecision: Failed to write: ${error}`);
 					throw error;
 				}
 			}
@@ -113,6 +137,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Timeout - FIFO never appeared
+		log(`writeFifoDecision: TIMEOUT - FIFO not found after ${maxAttempts * pollInterval}ms`);
 		throw new Error(`FIFO not found after ${maxAttempts * pollInterval}ms: ${fifoPath}`);
 	}
 
@@ -129,7 +154,10 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const command = event.input.command;
+		log(`tool_call: Intercepted bash command: ${command}`);
+		
 		const status = checkCommand(command);
+		log(`tool_call: Check result: ${status}`);
 
 		let decision: "allow" | "deny";
 
@@ -251,9 +279,11 @@ export default function (pi: ExtensionAPI) {
 
 		// Write decision to FIFO
 		try {
+			log(`tool_call: Writing decision "${decision}" to FIFO`);
 			await writeFifoDecision(command, decision);
+			log(`tool_call: Successfully wrote decision`);
 		} catch (error) {
-			console.error("Failed to write FIFO decision:", error);
+			log(`tool_call: Failed to write FIFO decision: ${error}`);
 		}
 
 		return undefined; // Wrapper handles blocking
