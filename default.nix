@@ -8,6 +8,7 @@
         overlays.numtide-llms
       ];
   },
+  debug ? false,
 }:
 with {
   testExtension = ext: ''
@@ -21,6 +22,16 @@ with {
     if [ -f "$out/extensions/${ext}/test-integration.mjs" ]; then
       patchShebangs "$out/extensions/${ext}/test-integration.mjs"
       chmod +x "$out/extensions/${ext}/test-integration.mjs"
+    fi
+
+    if [ -f "$out/extensions/${ext}/test-integration-debug.mjs" ]; then
+      patchShebangs "$out/extensions/${ext}/test-integration-debug.mjs"
+      chmod +x "$out/extensions/${ext}/test-integration-debug.mjs"
+    fi
+
+    if [ -f "$out/extensions/${ext}/test-integration-simple.mjs" ]; then
+      patchShebangs "$out/extensions/${ext}/test-integration-simple.mjs"
+      chmod +x "$out/extensions/${ext}/test-integration-simple.mjs"
     fi
 
     if [ -f "$out/extensions/${ext}/test-dummy-llm.ts" ]; then

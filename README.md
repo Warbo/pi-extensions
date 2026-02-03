@@ -103,3 +103,46 @@ Future extensions planned:
 - Git safety (confirm force pushes, branch deletions)
 - Network safety (confirm before exposing services)
 - Resource monitoring (warn about resource-intensive commands)
+
+---
+
+## Current Status & Architecture
+
+### Working Features ✅
+
+- Pre-configured allow/deny rules (exact and prefix matching)
+- Extension loads and intercepts bash commands
+- UI dialogs and "Allow" choices work correctly
+- Config persistence and `/permissions` command
+
+### Known Limitation & Solution
+
+**Problem**: Pi's extension events are asynchronous, so interactive denial cannot reliably block commands. Tool execution starts before the extension handler completes.
+
+**Solution**: We're implementing a bash wrapper script that creates a FIFO (named pipe) and blocks reading from it. The extension writes the user's decision to the FIFO, and the wrapper executes or denies based on that decision. This moves blocking from the extension layer (async, too late) to the execution layer (synchronous, before command runs).
+
+See `WRAPPER_ARCHITECTURE.md` for detailed design and `TODO.md` for implementation roadmap.
+
+## Testing & Development
+
+### Running Tests
+
+```bash
+nix-build  # Runs 14 unit tests + 2 integration tests
+```
+
+All tests run in Nix sandbox with no network access (using custom dummy LLM provider).
+
+**Current results**:
+- 14 unit tests: ✅ All passing
+- Integration test 1: ✅ Extension loads and shows UI
+- Integration test 2: ❌ Denial doesn't block (will be fixed by wrapper)
+
+### Documentation
+
+- **`PROJECT_SUMMARY.md`** - Overview of diagnosis and solution
+- **`WRAPPER_ARCHITECTURE.md`** - Detailed wrapper design
+- **`TODO.md`** - Implementation roadmap
+- **`TESTING_SUMMARY.md`** - Test methodology
+- **`extensions/bash-permission/KNOWN_ISSUES.md`** - Async blocking issue analysis
+

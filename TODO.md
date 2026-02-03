@@ -1,172 +1,182 @@
 # TODO: Pi Extensions Repository
 
-## Phase 1: Setup & Research ✓
+## Phase 1: Setup & Core Extension ✓
 
-- [x] Review pi extension documentation
-- [x] Study example extensions (permission-gate.ts, confirm-destructive.ts)
-- [x] Understand extension API and event system
-- [x] Initialize git repository structure
-- [x] Create README.md with repository overview
-- [x] Set up `default.nix` to build and test this project
-- [x] Set up `shell.nix` to provide dev tools
-- [x] Set up basic TypeScript configuration (if needed for development)
+**Completed**: Repository setup, bash-permission extension with comprehensive test suite (14 unit tests, 2 integration tests), dummy LLM provider for testing, diagnosis of async blocking issue in pi's extension system.
 
-## Phase 2: Bash Permission Extension (First Extension)
+See `PROJECT_SUMMARY.md` for details.
 
-### Core Functionality ✓
+## Phase 2: Wrapper Script Implementation (IN PROGRESS)
 
-- [x] Create `bash-permission/index.ts` extension file
-- [x] Implement `tool_call` event handler for bash tool interception
-- [x] Initial approach: require confirmation for ALL commands.
-- [x] Implement confirmation dialog using `ctx.ui.select()`
-- [x] Allow multiple options:
-  - ✅ Deny once
-  - ✅ Allow once
-  - ✅ Deny prefix
-  - ✅ Allow exact command
-  - ✅ Allow prefix. For example, if we're asked to confirm the command
-    `git add foo.txt`, we might allow `git add` followed by anything.
-- [x] Handle non-interactive mode (when `ctx.hasUI` is false)
-  - ✅ Allow saved confirmations, but deny anything unknown.
+### Context
 
-### Configuration System ✓
+Pi's extension events are asynchronous, so `tool_call` handlers cannot block execution reliably. Solution: Use a bash wrapper that creates a FIFO and blocks reading from it. Extension polls for FIFOs and writes decisions to them.
 
-- [x] Design configuration file format (JSON)
-  - ✅ Approvals which have been remembered (allowedExact, allowedPrefixes)
-  - ✅ Denials which have been remembered (deniedExact, deniedPrefixes)
-  - ✅ Timeout settings for confirmation dialog
-- [x] Implement config file loading from:
-  - ✅ `~/.config/pi/bash-permission.json` (global)
+See `WRAPPER_ARCHITECTURE.md` for detailed design.
 
-### User Experience
+### Research Tasks
 
-- [x] Display the actual command in confirmation dialog
-- [x] Add "Deny once" option. Blocks command, doesn't alter config.
-- [x] Add "Allow once" option. Runs command, doesn't alter config.
-- [x] Add "Deny prefix" option, with text entry for prefix. Defaults to whole
-      command. Blocks command, remembers prefix and blocks anything matching it.
-- [x] Add "Allow exact" option. Runs command, remembers that it's allowed.
-- [x] Add "Allow prefix" option, with text entry for prefix. Defaults to whole
-      command. Runs command, remembers prefix and allows anything matching it.
-- [x] Implement timeout option for auto-deny after N seconds
-- [x] Added `/permissions` command to view and manage rules
-- [ ] Ask weak model for short summary of a command's safety.
-- [ ] Ask weak model for safer alternatives.
+- [ ] **How pi invokes bash**
+  - Test with `pi --mode rpc` to see actual invocation
+  - Check if pi uses `bash` from PATH or hardcoded path
+  - Determine how to make pi use our wrapper
+  - Options: PATH manipulation, tool override, symlink
 
-### Testing ✓
+- [ ] **SHA256 consistency**
+  - Verify bash `sha256sum` and Node.js `crypto` produce identical hashes
+  - Test with edge cases: special chars, newlines, unicode
+  - Command: `echo -n "test" | sha256sum` vs `crypto.createHash('sha256').update('test').digest('hex')`
 
-- [x] Test with various (benign) commands
-- [x] Test configuration file loading and saving
-- [x] Test exact match (allow and deny)
-- [x] Test prefix match (allow and deny)
-- [x] Test priority ordering (exact deny > exact allow > prefix deny > prefix allow)
-- [x] Test edge cases:
-  - ✅ Multi-line commands
-  - ✅ Commands with escaped characters
-  - ✅ Piped commands
-  - ✅ Empty prefix handling
-- [x] Created automated test suite (14 unit tests, TAP format)
-- [x] Tests run via `nix-build` in sandbox
-- [x] Created RPC-based integration tests (4 passing)
-  - ✅ Permission dialog appears for bash commands
-  - ✅ Allow once permits command execution
-  - ✅ Allow exact saves configuration
-  - ✅ Allow prefix prompts for prefix input
-  - ⚠️  Deny blocking has timing issues in RPC mode (works in interactive)
-- [x] Created dummy LLM provider for testing without network access
-- [ ] Manual integration testing with pi (interactive mode)
-- [ ] Manual integration testing with pi (non-interactive mode)
+- [ ] **FIFO behavior on Linux**
+  - Test FIFO creation permissions
+  - Test `read -t` timeout behavior
+  - Test cleanup when process dies
+  - Verify atomic operations
 
-### Documentation ✓
+### Wrapper Implementation
 
-- [x] Create `bash-permission/README.md` with:
-  - ✅ Installation instructions
-  - ✅ Configuration options
-  - ✅ Usage examples
-  - ✅ FAQ section
-- [x] Add inline code comments
-- [x] Create example configuration files
-  - ✅ bash-permission.example.json
-  - ✅ config.schema.json
+- [ ] **Create `bash-wrapper.sh`**
+  - Parse bash arguments (handle `-c "command"` format)
+  - Calculate SHA256 of command
+  - Call config checker for pre-allowed/denied commands
+  - Create FIFO with unique name: `/tmp/pi-bash-perm-{hash}-{pid}.fifo`
+  - Block on `read -t 30 decision < "$FIFO"`
+  - Clean up FIFO after read (or timeout)
+  - Execute real bash or deny based on decision
 
-## Phase 3: Repository Structure ✓
+- [ ] **Create `check-command.mjs`** (Node.js helper)
+  - Read `~/.config/pi/bash-permission.json`
+  - Check exact matches (allowed/denied)
+  - Check prefix matches (allowed/denied)
+  - Return: "allow", "deny", or "unknown"
+  - Share matching logic with main extension (extract to common module?)
 
-- [x] Organize extensions in subdirectories:
-  ```
-  extensions/
-  ├── bash-permission/
-  │   ├── index.ts
-  │   ├── README.md
-  │   ├── config.schema.json
-  │   └── examples/
-  │       └── bash-permission.example.json
-  ├── [future-extension]/
-  └── README.md (placeholder)
-  ```
-- [x] Create root README.md with:
-  - ✅ Overview of all extensions
-  - ✅ Installation instructions
-  - ✅ How to use extensions with pi
-- [x] Add LICENSE file (Public Domain)
-- [x] Add .gitignore for TypeScript/Node.js
+- [ ] **Error handling in wrapper**
+  - Config file missing → treat as empty config
+  - Config malformed → deny by default, log error
+  - SHA256 calculation fails → deny by default
+  - mkfifo fails → deny by default
+  - Real bash not found → exit with error
+  - Unexpected decision value → deny
 
-## Phase 4: Future Extensions (Ideas)
+- [ ] **Wrapper testing**
+  - Unit test: config checking with various commands
+  - Integration test: create FIFO, simulate extension writing to it
+  - Test timeout behavior (simulate no extension response)
+  - Test cleanup on normal exit and on signals (SIGINT, SIGTERM)
 
-- [ ] **File protection extension**: Block writes to sensitive files/directories
-- [ ] **Git safety extension**: Confirm before force push, branch deletion, etc.
-- [ ] **Resource monitor**: Warn about commands that might use excessive CPU/memory
-- [ ] **Network safety**: Confirm before commands that expose services
-- [ ] **Backup prompt**: Suggest creating backup before destructive operations
-- [ ] **Time-based restrictions**: Block certain commands during specific hours
-- [ ] **Context-aware permissions**: Different rules based on current directory
+### Extension Updates
 
-## Phase 5: Distribution & Maintenance
+- [ ] **Add FIFO monitoring**
+  - Poll temp directory every 100ms for new FIFOs
+  - Pattern: `/tmp/pi-bash-perm-*.fifo`
+  - Track seen FIFOs to avoid duplicate processing
+  - Parse filename to extract hash and PID
 
-- [ ] Test installation via `pi -e ./path/to/extension.ts`
-- [ ] Test installation via `~/.pi/agent/extensions/`
-- [ ] Consider publishing as npm package (see docs/packages.md)
-- [ ] Set up CI/CD for automated testing
-- [ ] Create issue templates for bug reports and feature requests
-- [ ] Set up contribution workflow (PR templates, etc.)
-- [ ] Version management strategy
+- [ ] **Handle FIFO requests**
+  - When new FIFO detected, show UI dialog
+  - Get user decision (allow/deny)
+  - Write decision to FIFO: `fs.writeFileSync(fifoPath, "allow\n")`
+  - Handle errors (FIFO disappeared, permission denied)
 
-## Research Notes
+- [ ] **Stale FIFO cleanup**
+  - On extension startup: scan for stale FIFOs
+  - Check if PID from filename still exists
+  - Remove FIFOs where PID is dead
+  - Optional: periodic cleanup task every 5 minutes
 
-### Key Findings from Documentation
+- [ ] **Command tracking** (optional enhancement)
+  - Before wrapper creates FIFO, extension could track command via tool_call event
+  - Store mapping: hash → command
+  - When FIFO appears, look up command by hash for better UI
+  - This avoids showing just "hash: abc123..." in dialog
 
-1. **Extension locations**: 
-   - Global: `~/.pi/agent/extensions/*.ts`
-   - Project-local: `.pi/extensions/*.ts`
-   - Via flag: `pi -e ./extension.ts`
+- [ ] **Configuration updates**
+  - Add `wrapperEnabled` setting (default: true)
+  - Add `wrapperRealBashPath` (default: "/usr/bin/bash")
+  - Add `wrapperTempDir` (default: null = auto-detect)
+  - Add `wrapperTimeout` (default: 30 seconds)
 
-2. **Event system**: 
-   - `tool_call` fires before tool execution, can block via `{ block: true, reason: "..." }`
-   - `ctx.hasUI` indicates if interactive dialogs are available
-   - Extensions should handle both interactive and non-interactive modes
+### Integration
 
-3. **UI methods**:
-   - `ctx.ui.select()` - multiple choice
-   - `ctx.ui.confirm()` - yes/no
-   - `ctx.ui.notify()` - non-blocking notification
-   - Dialogs support timeout option with countdown
+- [ ] **Nix packaging**
+  - Build wrapper with `writeShellScript`
+  - Patch shebangs for wrapper and helper
+  - Install to: `$out/extensions/bash-permission/bash-wrapper`
+  - Install helper to: `$out/extensions/bash-permission/check-command.mjs`
+  - Make both executable
 
-4. **Best practices**:
-   - Use TypeScript with proper types from `@mariozechner/pi-coding-agent`
-   - Handle AbortSignal for cancellation
-   - Always check `ctx.hasUI` before using UI methods
-   - Provide fallback behavior for non-interactive mode
+- [ ] **Configure pi to use wrapper**
+  - Research: how to override bash tool in pi
+  - Option A: Modify PATH in extension's `session_start`
+  - Option B: Create symlink and modify PATH
+  - Option C: Ask user to configure pi settings
+  - Document the chosen approach
 
-### Reference Extensions to Study
+- [ ] **Pass real bash path to wrapper**
+  - Detect at runtime: `which bash` before modifying PATH?
+  - Hardcode based on common locations: `/usr/bin/bash`, `/bin/bash`?
+  - Make configurable via environment variable: `REAL_BASH`
+  - Store in config file after first detection
 
-- `permission-gate.ts` - Basic permission checking (our starting point)
-- `confirm-destructive.ts` - Session action confirmation
-- `protected-paths.ts` - File protection example (likely)
-- `timed-confirm.ts` - Confirmation with timeout
+### Testing
 
-## Questions/Decisions Needed
+- [ ] **Update integration tests**
+  - Test that denial now actually blocks execution
+  - Test pre-allowed commands (fast path, no FIFO)
+  - Test pre-denied commands (fast path, no FIFO)
+  - Test unknown command with allow (creates FIFO, receives "allow")
+  - Test unknown command with deny (creates FIFO, receives "deny")
+  - Test timeout (wrapper creates FIFO, extension never responds)
+  - Test concurrent requests (multiple wrappers, multiple FIFOs)
 
-- [ ] Should the extension be opt-in (no warnings by default) or opt-out (warn by default)?
-- [ ] What should be the default timeout for confirmation dialogs?
-- [ ] Should we maintain a community-curated list of dangerous patterns?
-- [ ] How strict should the matching be? (exact match vs fuzzy/heuristic)
-- [ ] Should we support learning mode (track user decisions to improve patterns)?
+- [ ] **End-to-end testing**
+  - Run pi with wrapper in interactive mode
+  - Test actual bash commands being blocked/allowed
+  - Verify config persistence works
+  - Test /permissions command
+  - Test with real workloads (not just tests)
+
+- [ ] **Test in Nix sandbox**
+  - Ensure wrapper works in isolated environment
+  - Verify temp directory handling
+  - Check that all tests pass via `nix-build`
+
+### Documentation
+
+- [ ] **Update `README.md`**
+  - Document wrapper architecture (high-level)
+  - Update installation instructions
+  - Explain configuration options
+  - Remove/update "Known Limitations" section
+
+- [ ] **Update `KNOWN_ISSUES.md`**
+  - Mark async issue as "RESOLVED by wrapper approach"
+  - Document any wrapper-specific limitations
+  - Keep original diagnosis for historical reference
+
+- [ ] **Update `TESTING_SUMMARY.md`**
+  - Add wrapper testing section
+  - Show before/after comparison
+  - Document that blocking now works
+
+- [ ] **Simplify documentation**
+  - Remove alternatives (we're doing wrapper)
+  - Remove excessive detail from completed tasks
+  - Focus on what's relevant going forward
+
+## Phase 3: Future Enhancements
+
+- [ ] **Extend to other tools**: Apply wrapper pattern to `write`, `read`, etc.
+- [ ] **Command caching**: Remember recent decisions temporarily to avoid repeated prompts
+- [ ] **Learning mode**: Suggest rules based on user patterns
+- [ ] **Better UI**: Show full command in dialog (requires command tracking)
+- [ ] **Performance optimization**: Use inotify instead of polling (Linux-specific)
+- [ ] **LLM safety analysis**: Ask weak model for command safety summary
+
+## Phase 4: Repository Expansion
+
+- [ ] **Additional extensions**: File protection, git safety, network safety, etc.
+- [ ] **Distribution**: Publish as npm package
+- [ ] **CI/CD**: Automated testing on commits
+- [ ] **Contribution workflow**: Issue templates, PR templates

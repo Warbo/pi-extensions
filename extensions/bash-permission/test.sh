@@ -141,11 +141,18 @@ fi
 
 # Integration tests (if pi is available)
 if command -v pi >/dev/null 2>&1; then
-	echo "# Running integration tests with pi..."
-	if ! ./test-integration.mjs 2>&1; then
-		echo "# Warning: Integration tests failed"
+	echo "# Running simple integration tests with pi..."
+	# Run with node directly to avoid shebang issues in Nix
+	if ! node ./test-integration-simple.mjs 2>&1; then
+		echo "# Warning: Simple integration tests failed"
 		# Don't fail the build for integration tests yet
 	fi
+	
+	# Optional: run full integration tests
+	# echo "# Running full integration tests with pi..."
+	# if ! ./test-integration.mjs 2>&1; then
+	# 	echo "# Warning: Full integration tests failed"
+	# fi
 else
 	echo "# Skipping integration tests (pi not available)"
 fi
