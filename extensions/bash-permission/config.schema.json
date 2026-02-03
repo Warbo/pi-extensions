@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/yourusername/pi-extensions/bash-permission/config.schema.json",
+  "title": "Bash Permission Configuration",
+  "description": "Configuration for the pi bash-permission extension",
+  "type": "object",
+  "properties": {
+    "allowedExact": {
+      "type": "array",
+      "description": "Commands that are always allowed (exact string match)",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "deniedExact": {
+      "type": "array",
+      "description": "Commands that are always blocked (exact string match)",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "allowedPrefixes": {
+      "type": "array",
+      "description": "Command prefixes that are always allowed",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "deniedPrefixes": {
+      "type": "array",
+      "description": "Command prefixes that are always blocked",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "confirmTimeout": {
+      "type": "integer",
+      "description": "Milliseconds to wait for user response before auto-denying",
+      "minimum": 1000,
+      "maximum": 300000,
+      "default": 30000
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "../config.schema.json",
+  "allowedExact": [
+    "ls",
+    "pwd",
+    "whoami",
+    "date",
+    "git status"
+  ],
+  "deniedExact": [
+    "rm -rf /",
+    "sudo rm -rf /",
+    ":(){:|:&};:"
+  ],
+  "allowedPrefixes": [
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+    "ls ",
+    "cat ",
+    "head ",
+    "tail ",
+    "grep ",
+    "find ",
+    "echo ",
+    "node ",
+    "npm run",
+    "npm test",
+    "python "
+  ],
+  "deniedPrefixes": [
+    "sudo rm",
+    "rm -rf /",
+    "rm -rf ~",
+    "dd if=",
+    "mkfs.",
+    "> /etc/",
+    "> /usr/",
+    "> /var/",
+    "chmod 777",
+    "chown root"
+  ],
+  "confirmTimeout": 30000
+}
