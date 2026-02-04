@@ -301,4 +301,21 @@ runTest("Edge case - issueId format not validated", () => {
 	if (!result) throw new Error("Any issueId format should validate");
 });
 
+runTest("Edge case - body parameter is required for new issue", () => {
+	const result = validator.validateAdd({ 
+		command: "add", 
+		subject: "Test" 
+	});
+	if (result) throw new Error("Should fail without body");
+});
+
+runTest("Edge case - empty body should be rejected", () => {
+	const result = validator.validateAdd({ 
+		command: "add", 
+		subject: "Test",
+		body: "" 
+	});
+	if (result) throw new Error("Empty body should be rejected");
+});
+
 process.exit(failCount > 0 ? 1 : 0);

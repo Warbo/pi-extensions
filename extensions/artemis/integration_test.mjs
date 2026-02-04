@@ -526,5 +526,261 @@ async function runTest(name, testFn) {
 		return true;
 	});
 
+	// Test: Issue body is stored and retrievable
+	await runTest("Add command stores issue body text", async (tempDir) => {
+		const testBody = "This is the detailed body text.\nIt has multiple lines.\nAnd should be stored in the issue.";
+		
+		const dummyLLM = createDummyLLM(tempDir, {
+			"create issue": {
+				text: "Creating issue with body",
+				toolCall: {
+					command: "add",
+					subject: "Body Test Issue",
+					body: testBody
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "create issue" });
+		
+		const toolEnd = await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		// Extract issue ID from result
+		const resultText = toolEnd.result?.content?.[0]?.text || "";
+		const issueIdMatch = resultText.match(/([a-f0-9]{16})/);
+		
+		if (!issueIdMatch) {
+			return "Failed to extract issue ID from result";
+		}
+		
+		const issueId = issueIdMatch[1];
+		
+		// Now verify the body is stored by showing the issue
+		const showResult = spawn("git", ["artemis", "show", issueId], {
+			cwd: tempDir,
+			stdio: "pipe"
+		});
+		
+		let output = "";
+		showResult.stdout.on("data", (data) => {
+			output += data.toString();
+		});
+		
+		await new Promise(resolve => showResult.on("close", resolve));
+		
+		// Check that the body text appears in the output
+		if (!output.includes("This is the detailed body text.")) {
+			return `Body text not found in show output. Output was:\n${output}`;
+		}
+		
+		if (!output.includes("It has multiple lines.")) {
+			return `Body text incomplete in show output. Output was:\n${output}`;
+		}
+		
+		return true;
+	});
+
+	// Test: Show command returns issue body
+	await runTest("Show command displays issue body in tool result", async (tempDir) => {
+		const testBody = "Critical bug in authentication module.\n\nSteps to reproduce:\n1. Login as admin\n2. Navigate to settings\n3. System crashes";
+		
+		const dummyLLM = createDummyLLM(tempDir, {
+			"create issue with body": {
+				text: "Creating issue",
+				toolCall: {
+					command: "add",
+					subject: "Auth Bug",
+					body: testBody
+				}
+			},
+			"show the issue": {
+				text: "Showing issue",
+				toolCall: {
+					command: "show",
+					issueId: "placeholder" // Will be replaced below
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		
+		// Create the issue
+		sendCommand(pi, { type: "prompt", message: "create issue with body" });
+		
+		const addEnd = await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis" && e.result?.details?.command?.includes("add")
+		);
+		
+		// Extract issue ID
+		const resultText = addEnd.result?.content?.[0]?.text || "";
+		const issueIdMatch = resultText.match(/([a-f0-9]{16})/);
+		
+		if (!issueIdMatch) {
+			pi.kill();
+			await new Promise(resolve => pi.on("close", resolve));
+			return "Failed to extract issue ID from add result";
+		}
+		
+		const issueId = issueIdMatch[1];
+		
+		// Update the dummy LLM to use the actual issue ID
+		const showLLM = createDummyLLM(tempDir, {
+			"show the issue": {
+				text: "Showing issue",
+				toolCall: {
+					command: "show",
+					issueId: issueId
+				}
+			}
+		});
+		
+		// Restart pi with updated LLM
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		const pi2 = startPi([showLLM, extension], tempDir);
+		const events2 = [];
+		const readline2 = createInterface({ input: pi2.stdout });
+		readline2.on("line", (line) => {
+			try {
+				events2.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		
+		// Show the issue
+		sendCommand(pi2, { type: "prompt", message: "show the issue" });
+		
+		const showEnd = await waitForEvent(events2,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi2.kill();
+		await new Promise(resolve => pi2.on("close", resolve));
+		
+		// Verify the body appears in the show result
+		const showOutput = showEnd.result?.content?.[0]?.text || "";
+		
+		if (!showOutput.includes("Critical bug in authentication module")) {
+			return `Body text not in show result. Result was:\n${showOutput}`;
+		}
+		
+		if (!showOutput.includes("Steps to reproduce:")) {
+			return `Body text incomplete in show result. Result was:\n${showOutput}`;
+		}
+		
+		return true;
+	});
+
+	// Test: Comment body is stored and retrievable
+	await runTest("Add comment stores comment body text", async (tempDir) => {
+		// First create an issue
+		const addResult = spawn("git", ["artemis", "add", "-m", "Comment Test Issue"], {
+			cwd: tempDir,
+			stdio: "pipe",
+			env: { ...process.env, EDITOR: "true" }
+		});
+		
+		let issueId = "";
+		addResult.stdout.on("data", (data) => {
+			const match = data.toString().match(/([a-f0-9]{16})/);
+			if (match) issueId = match[1];
+		});
+		
+		await new Promise(resolve => addResult.on("close", resolve));
+		
+		if (!issueId) {
+			return "Failed to create test issue";
+		}
+		
+		// Now add a comment with body
+		const commentBody = "I found the root cause.\n\nThe issue is in line 42 of auth.js.\nWe need to add null checking.";
+		
+		const dummyLLM = createDummyLLM(tempDir, {
+			"add comment": {
+				text: "Adding comment",
+				toolCall: {
+					command: "add",
+					issueId: issueId,
+					commentBody: commentBody
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "add comment" });
+		
+		await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		// Verify the comment body is stored by showing comment 0
+		const showResult = spawn("git", ["artemis", "show", issueId, "0"], {
+			cwd: tempDir,
+			stdio: "pipe"
+		});
+		
+		let output = "";
+		showResult.stdout.on("data", (data) => {
+			output += data.toString();
+		});
+		
+		await new Promise(resolve => showResult.on("close", resolve));
+		
+		// Check that the comment body text appears
+		if (!output.includes("I found the root cause.")) {
+			return `Comment body not found in show output. Output was:\n${output}`;
+		}
+		
+		if (!output.includes("The issue is in line 42 of auth.js.")) {
+			return `Comment body incomplete in show output. Output was:\n${output}`;
+		}
+		
+		return true;
+	});
+
 	process.exit(failCount > 0 ? 1 : 0);
 })();
