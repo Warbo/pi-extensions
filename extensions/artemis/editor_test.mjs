@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, unlinkSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
-import { createIssueEditorScript, createCommentEditorScript } from "./editor.mjs";
+import { createEditorScript } from "./editor.mjs";
 
 let failCount = 0;
 
@@ -36,60 +36,39 @@ function runTest(name, testFn) {
 	}
 }
 
-// Test: Issue editor script generation
-runTest("Issue editor script contains shebang", () => {
-	const script = createIssueEditorScript("/tmp/subject", "/tmp/body");
+// Test: Editor script generation
+runTest("Editor script contains shebang", () => {
+	const script = createEditorScript();
 	if (!script.startsWith("#!/bin/sh")) {
 		return "Script missing proper shebang";
 	}
 	return true;
 });
 
-runTest("Issue editor script references subject file", () => {
-	const script = createIssueEditorScript("/tmp/subject.txt", "/tmp/body.txt");
-	if (!script.includes("/tmp/subject.txt")) {
-		return "Script doesn't reference subject file";
+runTest("Editor script uses SUBJECT env var", () => {
+	const script = createEditorScript();
+	if (!script.includes("$SUBJECT") && !script.includes("${SUBJECT}")) {
+		return "Script doesn't use SUBJECT environment variable";
 	}
 	return true;
 });
 
-runTest("Issue editor script references body file", () => {
-	const script = createIssueEditorScript("/tmp/subject.txt", "/tmp/body.txt");
-	if (!script.includes("/tmp/body.txt")) {
-		return "Script doesn't reference body file";
+runTest("Editor script uses BODY env var", () => {
+	const script = createEditorScript();
+	if (!script.includes("$BODY") && !script.includes("${BODY}")) {
+		return "Script doesn't use BODY environment variable";
 	}
 	return true;
 });
 
-// Test: Comment editor script generation
-runTest("Comment editor script contains shebang", () => {
-	const script = createCommentEditorScript("/tmp/body");
-	if (!script.startsWith("#!/bin/sh")) {
-		return "Script missing proper shebang";
-	}
-	return true;
-});
-
-runTest("Comment editor script references body file", () => {
-	const script = createCommentEditorScript("/tmp/body.txt");
-	if (!script.includes("/tmp/body.txt")) {
-		return "Script doesn't reference body file";
-	}
-	return true;
-});
-
-// Test: Issue editor script execution
-runTest("Issue editor replaces subject line", () => {
+// Test: Editor script execution for issues
+runTest("Editor replaces subject line", () => {
 	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
 	
 	// Create test files
-	const subjectFile = join(testDir, "subject.txt");
-	const bodyFile = join(testDir, "body.txt");
 	const templateFile = join(testDir, "template.txt");
 	const scriptFile = join(testDir, "editor.sh");
 	
-	writeFileSync(subjectFile, "My Test Subject");
-	writeFileSync(bodyFile, "My test body");
 	writeFileSync(templateFile, `From: Test User
 Date: Wed, 04 Feb 2026 10:00:00 +0000
 State: new
@@ -97,18 +76,18 @@ Subject: brief description
 
 Detailed description.`);
 	
-	const script = createIssueEditorScript(subjectFile, bodyFile);
+	const script = createEditorScript();
 	writeFileSync(scriptFile, script, { mode: 0o755 });
 	
-	// Run the script
-	const result = spawnSync(scriptFile, [templateFile]);
+	// Run the script with SUBJECT env var
+	const result = spawnSync(scriptFile, [templateFile], {
+		env: { ...process.env, SUBJECT: "My Test Subject", BODY: "My test body" }
+	});
 	
 	// Check output
 	const output = readFileSync(templateFile, "utf-8");
 	
 	// Cleanup
-	unlinkSync(subjectFile);
-	unlinkSync(bodyFile);
 	unlinkSync(templateFile);
 	unlinkSync(scriptFile);
 	
@@ -119,17 +98,13 @@ Detailed description.`);
 	return true;
 });
 
-runTest("Issue editor replaces body", () => {
+runTest("Editor replaces body", () => {
 	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
 	
 	// Create test files
-	const subjectFile = join(testDir, "subject.txt");
-	const bodyFile = join(testDir, "body.txt");
 	const templateFile = join(testDir, "template.txt");
 	const scriptFile = join(testDir, "editor.sh");
 	
-	writeFileSync(subjectFile, "Test Subject");
-	writeFileSync(bodyFile, "Line 1 of body\nLine 2 of body");
 	writeFileSync(templateFile, `From: Test User
 Date: Wed, 04 Feb 2026 10:00:00 +0000
 State: new
@@ -137,18 +112,18 @@ Subject: brief description
 
 Detailed description.`);
 	
-	const script = createIssueEditorScript(subjectFile, bodyFile);
+	const script = createEditorScript();
 	writeFileSync(scriptFile, script, { mode: 0o755 });
 	
 	// Run the script
-	const result = spawnSync(scriptFile, [templateFile]);
+	spawnSync(scriptFile, [templateFile], {
+		env: { ...process.env, SUBJECT: "Test Subject", BODY: "Line 1 of body\nLine 2 of body" }
+	});
 	
 	// Check output
 	const output = readFileSync(templateFile, "utf-8");
 	
 	// Cleanup
-	unlinkSync(subjectFile);
-	unlinkSync(bodyFile);
 	unlinkSync(templateFile);
 	unlinkSync(scriptFile);
 	
@@ -167,17 +142,13 @@ Detailed description.`);
 	return true;
 });
 
-runTest("Issue editor preserves other lines", () => {
+runTest("Editor preserves other lines", () => {
 	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
 	
 	// Create test files
-	const subjectFile = join(testDir, "subject.txt");
-	const bodyFile = join(testDir, "body.txt");
 	const templateFile = join(testDir, "template.txt");
 	const scriptFile = join(testDir, "editor.sh");
 	
-	writeFileSync(subjectFile, "Test");
-	writeFileSync(bodyFile, "Body");
 	writeFileSync(templateFile, `From: Test User
 Date: Wed, 04 Feb 2026 10:00:00 +0000
 State: new
@@ -185,18 +156,18 @@ Subject: brief description
 
 Detailed description.`);
 	
-	const script = createIssueEditorScript(subjectFile, bodyFile);
+	const script = createEditorScript();
 	writeFileSync(scriptFile, script, { mode: 0o755 });
 	
 	// Run the script
-	spawnSync(scriptFile, [templateFile]);
+	spawnSync(scriptFile, [templateFile], {
+		env: { ...process.env, SUBJECT: "Test", BODY: "Body" }
+	});
 	
 	// Check output
 	const output = readFileSync(templateFile, "utf-8");
 	
 	// Cleanup
-	unlinkSync(subjectFile);
-	unlinkSync(bodyFile);
 	unlinkSync(templateFile);
 	unlinkSync(scriptFile);
 	
@@ -215,33 +186,32 @@ Detailed description.`);
 	return true;
 });
 
-// Test: Comment editor script execution
-runTest("Comment editor replaces body", () => {
+// Test: Editor script execution for comments
+runTest("Editor works for comments (with Re: subject)", () => {
 	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
 	
-	// Create test files
-	const bodyFile = join(testDir, "body.txt");
+	// Create test files (comment template has Subject: Re: ...)
 	const templateFile = join(testDir, "template.txt");
 	const scriptFile = join(testDir, "editor.sh");
 	
-	writeFileSync(bodyFile, "This is my comment\nWith multiple lines");
 	writeFileSync(templateFile, `From: Test User
 Date: Wed, 04 Feb 2026 10:00:00 +0000
 Subject: Re: Original Subject
 
 Detailed description.`);
 	
-	const script = createCommentEditorScript(bodyFile);
+	const script = createEditorScript();
 	writeFileSync(scriptFile, script, { mode: 0o755 });
 	
 	// Run the script
-	spawnSync(scriptFile, [templateFile]);
+	spawnSync(scriptFile, [templateFile], {
+		env: { ...process.env, SUBJECT: "Re: comment", BODY: "This is my comment\nWith multiple lines" }
+	});
 	
 	// Check output
 	const output = readFileSync(templateFile, "utf-8");
 	
 	// Cleanup
-	unlinkSync(bodyFile);
 	unlinkSync(templateFile);
 	unlinkSync(scriptFile);
 	
@@ -255,46 +225,6 @@ Detailed description.`);
 	
 	if (output.includes("Detailed description.")) {
 		return `"Detailed description." not removed. Output:\n${output}`;
-	}
-	
-	return true;
-});
-
-runTest("Comment editor preserves headers", () => {
-	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
-	
-	// Create test files
-	const bodyFile = join(testDir, "body.txt");
-	const templateFile = join(testDir, "template.txt");
-	const scriptFile = join(testDir, "editor.sh");
-	
-	writeFileSync(bodyFile, "Comment text");
-	writeFileSync(templateFile, `From: Test User
-Date: Wed, 04 Feb 2026 10:00:00 +0000
-Subject: Re: Original Subject
-
-Detailed description.`);
-	
-	const script = createCommentEditorScript(bodyFile);
-	writeFileSync(scriptFile, script, { mode: 0o755 });
-	
-	// Run the script
-	spawnSync(scriptFile, [templateFile]);
-	
-	// Check output
-	const output = readFileSync(templateFile, "utf-8");
-	
-	// Cleanup
-	unlinkSync(bodyFile);
-	unlinkSync(templateFile);
-	unlinkSync(scriptFile);
-	
-	if (!output.includes("From: Test User")) {
-		return "From line not preserved";
-	}
-	
-	if (!output.includes("Subject: Re: Original Subject")) {
-		return "Subject line not preserved (for comments, subject should NOT be replaced)";
 	}
 	
 	return true;

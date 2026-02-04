@@ -20,10 +20,8 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { writeFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createIssueEditorScript, createCommentEditorScript, writeEditorScript } from "./editor.mjs";
+import { unlink } from "node:fs/promises";
+import { createEditorScript, writeEditorScript } from "./editor.mjs";
 
 interface ArtemisDetails {
 	command: string;
@@ -129,16 +127,12 @@ Use this to log problems, track tasks, and manage issue status.`,
 							};
 						}
 						
-						// Write body to a temporary file
-						const bodyFile = join(tmpdir(), `artemis-body-${Date.now()}.txt`);
-						await writeFile(bodyFile, params.commentBody);
-						
-						// Create editor script
-						const scriptContent = createCommentEditorScript(bodyFile);
+						// Create editor script that uses SUBJECT/BODY env vars
+						const scriptContent = createEditorScript();
 						editorScript = await writeEditorScript(scriptContent);
 						
 						args.push(params.issueId);
-						cmdString = `EDITOR="${editorScript}" git artemis ${args.join(" ")}`;
+						cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
 						
 					} else {
 						// Creating new issue
@@ -157,19 +151,11 @@ Use this to log problems, track tasks, and manage issue status.`,
 							};
 						}
 						
-						// Write body to a temporary file
-						const bodyFile = join(tmpdir(), `artemis-body-${Date.now()}.txt`);
-						await writeFile(bodyFile, params.body);
-						
-						// Write subject to a temporary file
-						const subjectFile = join(tmpdir(), `artemis-subject-${Date.now()}.txt`);
-						await writeFile(subjectFile, params.subject);
-						
-						// Create editor script
-						const scriptContent = createIssueEditorScript(subjectFile, bodyFile);
+						// Create editor script that uses SUBJECT/BODY env vars
+						const scriptContent = createEditorScript();
 						editorScript = await writeEditorScript(scriptContent);
 						
-						cmdString = `EDITOR="${editorScript}" git artemis add`;
+						cmdString = `git artemis add (with EDITOR)`;
 					}
 					
 				} else if (params.command === "show") {
@@ -233,17 +219,33 @@ Use this to log problems, track tasks, and manage issue status.`,
 					content: [{ type: "text", text: `Running: ${cmdString}` }],
 				});
 
-				// Execute command
-				const env = { ...process.env };
-				if (editorScript) {
-					env.EDITOR = editorScript;
+				// Execute using shell to set environment variables
+				let result: any;
+				if (params.command === "add") {
+					// Build environment variable prefix
+					const envVars: string[] = [];
+					if (editorScript) {
+						envVars.push(`EDITOR='${editorScript}'`);
+					}
+					if (params.issueId) {
+						envVars.push(`SUBJECT='Re: comment'`);
+						envVars.push(`BODY='${params.commentBody?.replace(/'/g, "'\\''") || ""}'`);
+					} else {
+						envVars.push(`SUBJECT='${params.subject?.replace(/'/g, "'\\''") || ""}'`);
+						envVars.push(`BODY='${params.body?.replace(/'/g, "'\\''") || ""}'`);
+					}
+					
+					const shellCmd = `${envVars.join(' ')} git artemis ${args.join(' ')}`;
+					result = await pi.exec("sh", ["-c", shellCmd], {
+						signal,
+						cwd: ctx.cwd,
+					});
+				} else {
+					result = await pi.exec("git", ["artemis", ...args], {
+						signal,
+						cwd: ctx.cwd,
+					});
 				}
-				
-				const result = await pi.exec("git", ["artemis", ...args], {
-					signal,
-					cwd: ctx.cwd,
-					env,
-				});
 
 				// Check for cancellation
 				if (signal?.aborted) {

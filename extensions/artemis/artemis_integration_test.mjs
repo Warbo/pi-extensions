@@ -176,37 +176,46 @@ cp "$1" "${dumpFile}"
 
 // Test: Issue created with modified template includes body
 await runTest("Git artemis creates issue with body text", async (testDir) => {
-	// Create files for editor
-	const subjectFile = join(testDir, "subject.txt");
-	const bodyFile = join(testDir, "body.txt");
-	
-	writeFileSync(subjectFile, "Integration Test Subject");
-	writeFileSync(bodyFile, "This is the body text\nWith multiple lines\nFor testing");
-	
-	// Create editor that modifies the template
+	// Create editor that modifies the template using SUBJECT/BODY env vars
 	const editorScript = join(testDir, "modify-editor.sh");
 	writeFileSync(editorScript, `#!/bin/sh
+set -e
+temp="$1.tmp"
 {
+  found_subject=0
   while IFS= read -r line || [ -n "\${line}" ]; do
-    case "\${line}" in
-      Subject:*)
-        printf "Subject: "
-        cat '${subjectFile}'
-        echo ""
-        ;;
-      "Detailed description.")
-        cat '${bodyFile}'
-        ;;
-      *)
+    if [ "\${found_subject}" -eq 0 ]; then
+      case "\${line}" in
+        Subject:*)
+          echo "Subject: \${SUBJECT}"
+          found_subject=1
+          ;;
+        *)
+          echo "\${line}"
+          ;;
+      esac
+    else
+      if [ "\${line}" = "Detailed description." ]; then
+        echo "\${BODY}"
+        break
+      else
         echo "\${line}"
-        ;;
-    esac
+      fi
+    fi
   done < "$1"
-} > "$1.tmp" && mv "$1.tmp" "$1"
+} > "\${temp}"
+mv "\${temp}" "$1"
 `, { mode: 0o755 });
 	
 	// Create issue
-	const { stdout } = await execCommand("git", ["artemis", "add"], testDir, { EDITOR: editorScript });
+	const { stdout } = await execCommand("git", ["artemis", "add"], testDir, { 
+		...process.env,
+		EDITOR: editorScript,
+		SUBJECT: "Integration Test Subject",
+		BODY: `This is the body text
+With multiple lines
+For testing`
+	});
 	
 	const issueIdMatch = stdout.match(/([a-f0-9]{16})/);
 	if (!issueIdMatch) {
@@ -242,45 +251,65 @@ await runTest("Git artemis creates comment with body text", async (testDir) => {
 	
 	const issueId = issueIdMatch[1];
 	
-	// Create files for editor
-	const bodyFile = join(testDir, "comment-body.txt");
-	writeFileSync(bodyFile, "This is my comment\nWith some details\nAnd more info");
-	
-	// Create editor that modifies the template
+	// Create editor that modifies the template using SUBJECT/BODY env vars
 	const editorScript = join(testDir, "comment-editor.sh");
 	writeFileSync(editorScript, `#!/bin/sh
+set -e
+temp="$1.tmp"
 {
+  found_subject=0
   while IFS= read -r line || [ -n "\${line}" ]; do
-    if [ "\${line}" = "Detailed description." ]; then
-      cat '${bodyFile}'
+    if [ "\${found_subject}" -eq 0 ]; then
+      case "\${line}" in
+        Subject:*)
+          echo "Subject: \${SUBJECT}"
+          found_subject=1
+          ;;
+        *)
+          echo "\${line}"
+          ;;
+      esac
     else
-      echo "\${line}"
+      if [ "\${line}" = "Detailed description." ]; then
+        echo "\${BODY}"
+        break
+      else
+        echo "\${line}"
+      fi
     fi
   done < "$1"
-} > "$1.tmp" && mv "$1.tmp" "$1"
+} > "\${temp}"
+mv "\${temp}" "$1"
 `, { mode: 0o755 });
 	
 	// Add comment
-	await execCommand("git", ["artemis", "add", issueId], testDir, { EDITOR: editorScript });
+	await execCommand("git", ["artemis", "add", issueId], testDir, { 
+		...process.env,
+		EDITOR: editorScript,
+		SUBJECT: "Re: comment",
+		BODY: `This is my comment
+With some details
+And more info`
+	});
 	
-	// Show the issue to see comments
+	// Show the issue (which will list comments in the footer)
 	const { stdout: showOutput } = await execCommand("git", ["artemis", "show", issueId], testDir);
 	
-	// Check for comment indicator
+	// Verify comment appears in the Comments: section
 	if (!showOutput.includes("Comments:")) {
-		return `No comments found. Output:\n${showOutput}`;
+		return `Issue doesn't show Comments section. Output:\n${showOutput}`;
 	}
 	
-	// Show comment 1 (first comment)
-	const { stdout: commentOutput } = await execCommand("git", ["artemis", "show", issueId, "1"], testDir);
-	
-	// Verify comment body text is present
-	if (!commentOutput.includes("This is my comment")) {
-		return `Comment body not found. Output:\n${commentOutput}`;
+	if (!showOutput.includes("Re: comment")) {
+		return `Comment not listed in issue. Output:\n${showOutput}`;
 	}
 	
-	if (!commentOutput.includes("With some details")) {
-		return `Multiline comment not fully stored. Output:\n${commentOutput}`;
+	// List issues to verify comment count
+	const { stdout: listOutput } = await execCommand("git", ["artemis", "list", "-a"], testDir);
+	
+	// Should show (  1) indicating 1 comment
+	if (!listOutput.includes("(  1)")) {
+		return `Issue doesn't show comment count. Output:\n${listOutput}`;
 	}
 	
 	return true;

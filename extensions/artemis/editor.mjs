@@ -1,5 +1,8 @@
 /**
  * Helper functions to create editor scripts for git artemis
+ * 
+ * Artemis expects EDITOR to modify the template in place.
+ * We use SUBJECT and BODY environment variables that the editor script reads.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -7,49 +10,58 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Creates a shell script that replaces the subject and body in a git artemis template
+ * Creates a shell script that modifies an artemis template using SUBJECT and BODY env vars
+ * 
+ * The script processes the template line-by-line:
+ * 1. Outputs lines as-is until it finds "Subject:"
+ * 2. When it finds "Subject:", replaces the entire line with "Subject: $SUBJECT"
+ * 3. Continues outputting lines as-is until it finds "Detailed description."
+ * 4. When it finds "Detailed description.", replaces it with "$BODY" and stops
+ * 
+ * This matches the artemis test suite's EDITOR script approach.
  */
-export function createIssueEditorScript(subjectFile, bodyFile) {
+export function createEditorScript() {
 	return `#!/bin/sh
-{
-  while IFS= read -r line || [ -n "\${line}" ]; do
-    case "\${line}" in
-      Subject:*)
-        printf "Subject: "
-        cat '${subjectFile}'
-        echo ""
-        ;;
-      "Detailed description.")
-        cat '${bodyFile}'
-        ;;
-      *)
-        echo "\${line}"
-        ;;
-    esac
-  done < "$1"
-} > "$1.tmp" && mv "$1.tmp" "$1"
-`;
-}
+set -e
 
-/**
- * Creates a shell script that replaces the body in a git artemis comment template
- */
-export function createCommentEditorScript(bodyFile) {
-	return `#!/bin/sh
+# Use a temp file to build the modified template
+temp="$1.tmp"
+
 {
+  # First loop: Output lines until we find Subject:, then replace it
+  found_subject=0
   while IFS= read -r line || [ -n "\${line}" ]; do
-    if [ "\${line}" = "Detailed description." ]; then
-      cat '${bodyFile}'
+    if [ "\${found_subject}" -eq 0 ]; then
+      case "\${line}" in
+        Subject:*)
+          echo "Subject: \${SUBJECT}"
+          found_subject=1
+          ;;
+        *)
+          echo "\${line}"
+          ;;
+      esac
     else
-      echo "\${line}"
+      # After subject, look for "Detailed description."
+      if [ "\${line}" = "Detailed description." ]; then
+        # Replace placeholder with body and stop processing
+        # Use printf to handle newlines in the BODY variable
+        printf '%s\n' "\${BODY}"
+        break
+      else
+        echo "\${line}"
+      fi
     fi
   done < "$1"
-} > "$1.tmp" && mv "$1.tmp" "$1"
+} > "\${temp}"
+
+# Replace original with modified version
+mv "\${temp}" "$1"
 `;
 }
 
 /**
- * Writes an editor script to a temporary file
+ * Writes an editor script to a temporary file with execute permissions
  */
 export async function writeEditorScript(scriptContent) {
 	const scriptPath = join(tmpdir(), `artemis-editor-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
