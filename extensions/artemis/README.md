@@ -1,6 +1,6 @@
 # Artemis Extension
 
-A pi extension that integrates the [artemis](https://github.com/dspinellis/git-issue) git-based issue tracker, allowing the LLM to manage issues, tasks, and notes directly within your repository.
+A pi extension that integrates the artemis git-based issue tracker, allowing the LLM to manage issues, tasks, and notes directly within your repository.
 
 ## Overview
 
@@ -13,12 +13,7 @@ The artemis extension provides a `git_artemis` tool that wraps the `git artemis`
 
 ## Prerequisites
 
-You need `git-artemis` (or `git-issue`) installed on your system:
-
-```bash
-# Install git-issue (provides git-artemis)
-# Via package manager or from https://github.com/dspinellis/git-issue
-```
+You need `git-artemis` installed on your system. This is provided by the `artemis` package (a Python-based git issue tracker).
 
 Initialize artemis in your repository:
 
@@ -221,11 +216,14 @@ git artemis list
 
 ### "Command not found"
 
-Install git-issue/git-artemis:
+Install artemis:
 
 ```bash
 # Check if installed
 which git-artemis
+
+# Install via Nix
+nix-env -iA nixpkgs.artemis
 ```
 
 ### "No issues found"
@@ -242,6 +240,5 @@ git_artemis(
 
 ## See Also
 
-- [git-issue documentation](https://github.com/dspinellis/git-issue)
 - [pi documentation](https://github.com/badlogic/pi)
 - [Extension development guide](https://github.com/badlogic/pi/blob/main/docs/extensions.md)

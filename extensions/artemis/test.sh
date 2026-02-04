@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Testing artemis extension..."
-
 # Check if the extension file exists
 if [ ! -f "index.ts" ]; then
-    echo "Error: index.ts not found"
+    echo "not ok - index.ts not found"
     exit 1
 fi
 
 # Check that the file has basic structure
 if ! grep -q "export default function" index.ts; then
-    echo "Error: Missing default export function"
+    echo "not ok - Missing default export function"
     exit 1
 fi
 
 if ! grep -q "pi.registerTool" index.ts; then
-    echo "Error: Missing tool registration"
+    echo "not ok - Missing tool registration"
     exit 1
 fi
 
-echo "✓ Artemis extension tests passed"
-exit 0
+# Check for git-artemis installation
+if ! command -v git-artemis &> /dev/null; then
+    echo "not ok - git-artemis not found"
+    echo "  # This extension requires the artemis package in buildInputs"
+    exit 1
+fi
+
+CODE=0
+node ./unit_test.mjs || CODE=1
+node ./integration_test.mjs || CODE=1
+
+exit "$CODE"

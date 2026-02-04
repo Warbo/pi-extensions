@@ -1,0 +1,530 @@
+#!/usr/bin/env node
+/**
+ * Integration tests for artemis extension
+ * Tests extension with pi in RPC mode and actual git artemis execution
+ */
+
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+let failCount = 0;
+
+function testPass(name) {
+	console.log(`ok - ${name}`);
+}
+
+function testFail(name, reason) {
+	console.log(`not ok - ${name}`);
+	if (reason) {
+		console.log(`  # ${reason}`);
+	}
+	failCount++;
+}
+
+function startPi(extensions, cwd) {
+	const args = [
+		"--mode", "rpc",
+		"--provider", "dummy",
+		"--model", "dummy-model",
+		...extensions.flatMap(ext => ["-e", ext])
+	];
+	
+	return spawn("pi", args, {
+		stdio: ["pipe", "pipe", "pipe"],
+		cwd,
+		env: { ...process.env, HOME: cwd }
+	});
+}
+
+function sendCommand(proc, cmd) {
+	proc.stdin.write(JSON.stringify(cmd) + "\n");
+}
+
+function waitForEvent(events, predicate, timeout = 10000) {
+	return new Promise((resolve, reject) => {
+		const startTime = Date.now();
+		const check = () => {
+			const event = events.find(predicate);
+			if (event) {
+				resolve(event);
+			} else if (Date.now() - startTime > timeout) {
+				reject(new Error("Timeout waiting for event"));
+			} else {
+				setTimeout(check, 50);
+			}
+		};
+		check();
+	});
+}
+
+function createDummyLLM(tempDir, responses) {
+	const llmPath = join(tempDir, "custom-llm.ts");
+	const responsesJson = JSON.stringify(responses);
+	const llmCode = `
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+	type AssistantMessage,
+	type AssistantMessageEventStream,
+	type Context,
+	type Model,
+	type SimpleStreamOptions,
+	createAssistantMessageEventStream,
+} from "@mariozechner/pi-ai";
+
+const responses = ${responsesJson};
+
+function streamDummyLLM(
+	model: Model<any>,
+	context: Context,
+	options?: SimpleStreamOptions
+): AssistantMessageEventStream {
+	const stream = createAssistantMessageEventStream();
+
+	(async () => {
+		const output: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 100,
+				output: 50,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 150,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+
+		try {
+			if (options?.signal?.aborted) throw new Error("Aborted");
+
+			const lastUserMsg = context.messages.findLast((m) => m.role === "user");
+			const userText =
+				typeof lastUserMsg?.content === "string"
+					? lastUserMsg.content
+					: lastUserMsg?.content?.find((c) => c.type === "text")?.text ?? "";
+
+			let response = responses.default || { text: "OK", toolCall: null };
+			for (const [key, value] of Object.entries(responses)) {
+				if (userText.toLowerCase().includes(key.toLowerCase())) {
+					response = value;
+					break;
+				}
+			}
+
+			stream.push({ type: "start", partial: output });
+
+			const textContent = { type: "text" as const, text: response.text };
+			output.content.push(textContent);
+			stream.push({ type: "text_start", contentIndex: 0, partial: output });
+			stream.push({ type: "text_delta", contentIndex: 0, delta: response.text, partial: output });
+			stream.push({ type: "text_end", contentIndex: 0, content: response.text, partial: output });
+
+			if (response.toolCall) {
+				output.stopReason = "toolUse";
+				const toolCall = {
+					type: "toolCall" as const,
+					id: \`call_\${Date.now()}\`,
+					name: "git_artemis",
+					arguments: response.toolCall,
+				};
+				output.content.push(toolCall);
+				stream.push({ type: "toolcall_start", contentIndex: 1, partial: output });
+				stream.push({ type: "toolcall_end", contentIndex: 1, toolCall, partial: output });
+			}
+
+			stream.push({ type: "done", reason: output.stopReason as any, message: output });
+			stream.end();
+		} catch (error) {
+			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			output.errorMessage = error instanceof Error ? error.message : String(error);
+			stream.push({ type: "error", reason: output.stopReason, error: output });
+			stream.end();
+		}
+	})();
+
+	return stream;
+}
+
+export default function (pi: ExtensionAPI) {
+	pi.registerProvider("dummy", {
+		baseUrl: "http://localhost:1234",
+		apiKey: "dummy-key",
+		api: "openai-completions",
+		models: [
+			{
+				id: "dummy-model",
+				name: "Dummy Test Model",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 4096,
+			},
+		],
+		streamSimple: streamDummyLLM,
+	});
+}
+`;
+	writeFileSync(llmPath, llmCode, "utf-8");
+	return llmPath;
+}
+
+function initGitRepo(dir) {
+	// Initialize git repo
+	spawn("git", ["init"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+	spawn("git", ["config", "user.name", "Test User"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+	spawn("git", ["config", "user.email", "test@example.com"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+	
+	// Create initial commit
+	writeFileSync(join(dir, "README.md"), "# Test Repo\n", "utf-8");
+	spawn("git", ["add", "."], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+	spawn("git", ["commit", "-m", "Initial commit"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+}
+
+async function runTest(name, testFn) {
+	const tempDir = join(tmpdir(), `pi-artemis-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	mkdirSync(tempDir, { recursive: true });
+	
+	try {
+		// Initialize git repo with artemis
+		initGitRepo(tempDir);
+		
+		// Wait for git init to complete
+		await new Promise(resolve => setTimeout(resolve, 1000));
+		
+		// Initialize artemis
+		const artemisInit = spawn("git", ["artemis", "list"], { cwd: tempDir, stdio: "pipe" });
+		await new Promise(resolve => artemisInit.on("close", resolve));
+		
+		const result = await Promise.race([
+			testFn(tempDir),
+			new Promise((_, reject) =>
+				setTimeout(() => reject(new Error("Test timeout")), 30000)
+			),
+		]);
+		
+		if (result === true) {
+			testPass(name);
+		} else {
+			testFail(name, result || "Test returned false");
+		}
+	} catch (error) {
+		testFail(name, error.message);
+	} finally {
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+}
+
+(async function() {
+	// Test: List command works
+	await runTest("List command executes successfully", async (tempDir) => {
+		const dummyLLM = createDummyLLM(tempDir, {
+			"list issues": {
+				text: "Listing issues",
+				toolCall: { command: "list" }
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "list issues" });
+		
+		const toolStart = await waitForEvent(events,
+			e => e.type === "tool_execution_start" && e.toolName === "git_artemis"
+		);
+		
+		if (toolStart.args.command !== "list") {
+			pi.kill();
+			return "Expected command to be 'list'";
+		}
+		
+		const toolEnd = await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		// Should succeed even with no issues
+		return true;
+	});
+
+	// Test: Add issue creates new issue
+	await runTest("Add command creates new issue", async (tempDir) => {
+		const dummyLLM = createDummyLLM(tempDir, {
+			"create issue": {
+				text: "Creating issue",
+				toolCall: {
+					command: "add",
+					subject: "Test Bug",
+					body: "This is a test issue for the integration test"
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "create issue" });
+		
+		const toolEnd = await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		// Check if issue was created by listing issues
+		const listResult = spawn("git", ["artemis", "list", "-a"], {
+			cwd: tempDir,
+			stdio: "pipe"
+		});
+		
+		let output = "";
+		listResult.stdout.on("data", (data) => {
+			output += data.toString();
+		});
+		
+		await new Promise(resolve => listResult.on("close", resolve));
+		
+		if (!output.includes("Test Bug")) {
+			return "Issue was not created";
+		}
+		
+		return true;
+	});
+
+	// Test: Show command displays issue
+	await runTest("Show command displays issue", async (tempDir) => {
+		// First create an issue
+		const addResult = spawn("git", ["artemis", "add", "-m", "Show Test Issue"], {
+			cwd: tempDir,
+			stdio: "pipe",
+			env: { ...process.env, EDITOR: "true" }
+		});
+		
+		let issueId = "";
+		addResult.stdout.on("data", (data) => {
+			const match = data.toString().match(/([a-f0-9]{16})/);
+			if (match) issueId = match[1];
+		});
+		
+		await new Promise(resolve => addResult.on("close", resolve));
+		
+		if (!issueId) {
+			return "Failed to create test issue";
+		}
+		
+		// Now test show command
+		const dummyLLM = createDummyLLM(tempDir, {
+			"show issue": {
+				text: "Showing issue",
+				toolCall: {
+					command: "show",
+					issueId: issueId
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "show issue" });
+		
+		const toolEnd = await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		// Verify the result contains issue info
+		const resultText = toolEnd.result?.content?.[0]?.text || "";
+		if (!resultText.includes("Show Test Issue")) {
+			return "Show result doesn't contain issue subject";
+		}
+		
+		return true;
+	});
+
+	// Test: Close command closes issue
+	await runTest("Close command closes issue", async (tempDir) => {
+		// First create an issue
+		const addResult = spawn("git", ["artemis", "add", "-m", "Close Test Issue"], {
+			cwd: tempDir,
+			stdio: "pipe",
+			env: { ...process.env, EDITOR: "true" }
+		});
+		
+		let issueId = "";
+		addResult.stdout.on("data", (data) => {
+			const match = data.toString().match(/([a-f0-9]{16})/);
+			if (match) issueId = match[1];
+		});
+		
+		await new Promise(resolve => addResult.on("close", resolve));
+		
+		if (!issueId) {
+			return "Failed to create test issue";
+		}
+		
+		// Now test close command
+		const dummyLLM = createDummyLLM(tempDir, {
+			"close issue": {
+				text: "Closing issue",
+				toolCall: {
+					command: "close",
+					issueId: issueId
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "close issue" });
+		
+		await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		// Verify issue is closed (not in default list)
+		const listResult = spawn("git", ["artemis", "list"], {
+			cwd: tempDir,
+			stdio: "pipe"
+		});
+		
+		let output = "";
+		listResult.stdout.on("data", (data) => {
+			output += data.toString();
+		});
+		
+		await new Promise(resolve => listResult.on("close", resolve));
+		
+		if (output.includes(issueId)) {
+			return "Issue still appears in default list (not closed)";
+		}
+		
+		return true;
+	});
+
+	// Test: List with all flag shows all issues
+	await runTest("List with all flag shows closed issues", async (tempDir) => {
+		// Create and close an issue
+		const addResult = spawn("git", ["artemis", "add", "-m", "Closed Issue"], {
+			cwd: tempDir,
+			stdio: "pipe",
+			env: { ...process.env, EDITOR: "true" }
+		});
+		
+		let issueId = "";
+		addResult.stdout.on("data", (data) => {
+			const match = data.toString().match(/([a-f0-9]{16})/);
+			if (match) issueId = match[1];
+		});
+		
+		await new Promise(resolve => addResult.on("close", resolve));
+		
+		if (!issueId) {
+			return "Failed to create test issue";
+		}
+		
+		// Close it
+		const closeResult = spawn("git", ["artemis", "add", issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n"], {
+			cwd: tempDir,
+			stdio: "pipe"
+		});
+		await new Promise(resolve => closeResult.on("close", resolve));
+		
+		// Test list with all=true
+		const dummyLLM = createDummyLLM(tempDir, {
+			"list all": {
+				text: "Listing all issues",
+				toolCall: {
+					command: "list",
+					all: true
+				}
+			}
+		});
+		
+		const extension = join(__dirname, "index.ts");
+		const pi = startPi([dummyLLM, extension], tempDir);
+		
+		const events = [];
+		const readline = createInterface({ input: pi.stdout });
+		readline.on("line", (line) => {
+			try {
+				events.push(JSON.parse(line));
+			} catch (e) {}
+		});
+		
+		await new Promise(resolve => setTimeout(resolve, 500));
+		sendCommand(pi, { type: "prompt", message: "list all" });
+		
+		const toolEnd = await waitForEvent(events,
+			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+		);
+		
+		pi.kill();
+		await new Promise(resolve => pi.on("close", resolve));
+		
+		const resultText = toolEnd.result?.content?.[0]?.text || "";
+		if (!resultText.includes(issueId)) {
+			return "Closed issue should appear in list with all=true";
+		}
+		
+		return true;
+	});
+
+	process.exit(failCount > 0 ? 1 : 0);
+})();
