@@ -24,7 +24,7 @@ with rec {
           }
           ''
             export HOME="$PWD"
-            cp -r "${./extensions}/${ext}" "$out"
+            cp -r "${./extensions + "/${ext}"}" "$out"
             chmod +w -R "$out"
             patchShebangs "$out"
             cd "$out"
