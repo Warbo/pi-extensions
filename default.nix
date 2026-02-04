@@ -44,28 +44,24 @@ with {
 with rec {
   make-extension =
     ext:
-    with {
-      drv =
-        pkgs.runCommand "pi-extension-${ext}"
-          {
-            buildInputs = [
-              artemis
-              pkgs.nodejs_20
-              pkgs.nodePackages.typescript
-              pkgs.llm-agents.pi
-              pkgs.git
-            ];
-          }
-          ''
-            export HOME="$PWD"
-            cp -r "${./extensions + "/${ext}"}" "$out"
-            chmod +w -R "$out"
-            patchShebangs "$out"
-            cd "$out"
-            ./test.sh
-          '';
-    };
-    "${drv}/index.ts";
+    pkgs.runCommand "pi-extension-${ext}"
+      {
+        buildInputs = [
+          artemis
+          pkgs.nodejs_20
+          pkgs.nodePackages.typescript
+          pkgs.llm-agents.pi
+          pkgs.git
+        ];
+      }
+      ''
+        export HOME="$PWD"
+        cp -r "${./extensions + "/${ext}"}" "$out"
+        chmod +w -R "$out"
+        patchShebangs "$out"
+        cd "$out"
+        ./test.sh
+      '';
 };
 rec {
   all = pkgs.writeText "pi-all-extensions" (
