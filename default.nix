@@ -1,7 +1,10 @@
 with {
   inherit (builtins)
+    attrValues
     convertHash
     getEnv
+    mapAttrs
+    readDir
     ;
 };
 {
@@ -65,10 +68,8 @@ with rec {
 };
 rec {
   all = pkgs.writeText "pi-all-extensions" (
-    pkgs.lib.concatStringsSep "\n" (builtins.attrValues extensions)
+    pkgs.lib.concatMapStringsSep "\n" (e: "${e}") (attrValues extensions)
   );
 
-  extensions = builtins.mapAttrs (name: _: make-extension name) (
-    builtins.readDir ./extensions
-  );
+  extensions = mapAttrs (name: _: make-extension name) (readDir ./extensions);
 }
