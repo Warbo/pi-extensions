@@ -1,70 +1,67 @@
 /**
  * Artemis Extension - Git-based issue tracker integration
  *
- * This extension provides a `git_artemis` tool that wraps the git-artemis command,
- * allowing the LLM to:
- * - List issues and filter by properties
- * - Create new issues
- * - Add comments to existing issues
- * - View issue details
- * - Update issue properties (state, resolution, etc.)
+ * This extension provides a `git_artemis` tool that wraps git artemis commands:
+ * - git artemis list - List issues with state=new (or all with -a)
+ * - git artemis add - Create an issue (subject + body)
+ * - git artemis add <id> - Add comment to an issue
+ * - git artemis show <id> - Show an issue
+ * - git artemis show <id> <n> - Show comment n on an issue
+ * - git artemis add <id> -p state=resolved -p resolution=fixed - Close an issue
  *
  * Use cases:
  * - Make notes of problems discovered during development
  * - Log information about known issues
  * - Track tasks and TODOs directly in the repository
- * - Close or update issue status as work progresses
+ * - Close issues as work progresses
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface ArtemisDetails {
-	action: "list" | "add" | "show" | "update";
-	stdout?: string;
-	stderr?: string;
-	exitCode: number;
 	command: string;
-	error?: string;
+	stdout: string;
+	stderr: string;
+	exitCode: number;
 }
 
 const ArtemisParams = Type.Object({
-	action: StringEnum(["list", "add", "show", "update"] as const, {
-		description: "Action to perform: list (show issues), add (create issue/comment), show (view issue details), update (change properties)",
+	command: StringEnum(["list", "add", "show", "close"] as const, {
+		description: "Command: list (show issues), add (create issue or comment), show (view issue/comment), close (mark issue resolved)",
 	}),
 	
-	// For list action
+	// For list
 	all: Type.Optional(Type.Boolean({ 
-		description: "List all issues (default: only new/open issues)" 
-	})),
-	property: Type.Optional(Type.String({ 
-		description: "Filter by property (e.g., 'state=new') or list property values (e.g., 'state')" 
-	})),
-	order: Type.Optional(StringEnum(["new", "latest"] as const, {
-		description: "Order issues by: 'new' (date submitted) or 'latest' (last message)"
+		description: "Show all issues instead of just state=new (default: false)" 
 	})),
 	
-	// For add action (new issue)
-	message: Type.Optional(Type.String({ 
-		description: "Issue subject/title (for creating new issue)" 
+	// For add (new issue)
+	subject: Type.Optional(Type.String({ 
+		description: "Issue subject/title (required for creating new issue)" 
 	})),
-	comment: Type.Optional(Type.String({ 
-		description: "Issue description/body or comment text" 
+	body: Type.Optional(Type.String({ 
+		description: "Issue body/description (required for creating new issue)" 
 	})),
 	
-	// For add/show/update actions (existing issue)
+	// For add (comment), show, close
 	issueId: Type.Optional(Type.String({ 
-		description: "Issue ID to show, comment on, or update" 
+		description: "Issue ID (required for comment, show, close)" 
 	})),
 	
-	// For update action
-	properties: Type.Optional(Type.Array(Type.String(), {
-		description: "Properties to set (e.g., ['state=resolved', 'resolution=fixed'])"
+	// For add (comment)
+	commentBody: Type.Optional(Type.String({ 
+		description: "Comment text (required for adding comment)" 
 	})),
-	noPropertyComment: Type.Optional(Type.Boolean({
-		description: "Don't add automatic comment about property changes"
+	
+	// For show (comment)
+	commentNumber: Type.Optional(Type.Number({ 
+		description: "Comment number to show (optional, for 'show' command)" 
 	})),
 });
 
@@ -72,195 +69,245 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "git_artemis",
 		label: "Artemis",
-		description: `Manage issues using git-artemis issue tracker. 
+		description: `Execute git artemis commands to manage issues.
 
-Actions:
-- list: Show issues (use 'all=true' for all, 'property' for filtering, 'order' for sorting)
-- add: Create new issue (provide 'message' and optionally 'comment') OR add comment to existing issue (provide 'issueId')
-- show: View issue details (provide 'issueId')
-- update: Change issue properties (provide 'issueId' and 'properties' array like ['state=resolved', 'resolution=fixed'])
+Commands:
+- list: List issues (shows state=new by default, use all=true for all issues)
+  Example: git_artemis(command="list")
+  Example: git_artemis(command="list", all=true)
+  
+- add: Create issue OR add comment
+  New issue: git_artemis(command="add", subject="Bug in parser", body="Details about the bug...")
+  Add comment: git_artemis(command="add", issueId="abc123", commentBody="Found the root cause...")
+  
+- show: Show issue or specific comment
+  Show issue: git_artemis(command="show", issueId="abc123")
+  Show comment: git_artemis(command="show", issueId="abc123", commentNumber=0)
 
-Common use cases:
-- Log problems: git_artemis(action="add", message="Memory leak in worker", comment="Details...")
-- Find tasks: git_artemis(action="list", property="state=new")
-- Get details: git_artemis(action="show", issueId="abc123")
-- Close issue: git_artemis(action="update", issueId="abc123", properties=["state=resolved", "resolution=fixed"])`,
+- close: Close an issue (sets state=resolved, resolution=fixed)
+  Example: git_artemis(command="close", issueId="abc123")
+
+Use this to log problems, track tasks, and manage issue status.`,
 		
 		parameters: ArtemisParams,
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			// Build git artemis command
-			const args: string[] = [params.action];
+			let editorScript: string | undefined;
 			
-			switch (params.action) {
-				case "list":
-					if (params.all) args.push("-a");
-					if (params.property) args.push("-p", params.property);
-					if (params.order) args.push("-o", params.order);
-					break;
-					
-				case "add":
-					if (params.issueId) {
-						// Adding comment to existing issue - artemis doesn't support this via command line
-						// The user needs to use an editor, so we'll return an error
-						return {
-							content: [{
-								type: "text",
-								text: "Error: Adding comments to existing issues requires interactive editor. Use 'show' to view the issue, then update properties if needed."
-							}],
-							details: {
-								action: params.action,
-								exitCode: 1,
-								command: "git artemis add",
-								error: "comment addition not supported via CLI"
-							} as ArtemisDetails,
-						};
-					} else if (params.message) {
-						// Creating new issue
-						args.push("-m", params.message);
-						if (params.properties) {
-							params.properties.forEach(prop => {
-								args.push("-p", prop);
-							});
-						}
+			try {
+				const args: string[] = [];
+				let cmdString: string;
+				
+				if (params.command === "list") {
+					args.push("list");
+					if (!params.all) {
+						// Default: only show state=new
+						args.push("-p", "state=new");
 					} else {
-						return {
-							content: [{
-								type: "text",
-								text: "Error: For 'add' action, provide 'message' to create new issue"
-							}],
-							details: {
-								action: params.action,
-								exitCode: 1,
-								command: "git artemis add",
-								error: "missing required parameters"
-							} as ArtemisDetails,
-						};
+						args.push("-a");
 					}
-					break;
+					cmdString = `git artemis ${args.join(" ")}`;
 					
-				case "show":
+				} else if (params.command === "add") {
+					args.push("add");
+					
+					if (params.issueId) {
+						// Adding comment to existing issue
+						if (!params.commentBody) {
+							return {
+								content: [{
+									type: "text",
+									text: "Error: commentBody required when adding comment to issue"
+								}],
+								details: {
+									command: "git artemis add <id>",
+									stdout: "",
+									stderr: "missing commentBody",
+									exitCode: 1,
+								} as ArtemisDetails,
+							};
+						}
+						
+						// Create editor script that replaces "Detailed description." with actual comment body
+						editorScript = join(tmpdir(), `artemis-editor-${Date.now()}.sh`);
+						const scriptContent = `#!/bin/bash
+# Read the body from a heredoc and use it to replace "Detailed description."
+BODY=$(cat << 'BODY_END'
+${params.commentBody}
+BODY_END
+)
+# Replace "Detailed description." with the actual body
+sed -i "s/Detailed description\\./$(printf '%s\\n' "$BODY" | sed 's/[&/\\]/\\\\&/g')/" "$1"
+`;
+						await writeFile(editorScript, scriptContent, { mode: 0o755 });
+						
+						args.push(params.issueId);
+						cmdString = `EDITOR="${editorScript}" git artemis ${args.join(" ")}`;
+						
+					} else {
+						// Creating new issue
+						if (!params.subject || !params.body) {
+							return {
+								content: [{
+									type: "text",
+									text: "Error: subject and body required when creating new issue"
+								}],
+								details: {
+									command: "git artemis add",
+									stdout: "",
+									stderr: "missing subject or body",
+									exitCode: 1,
+								} as ArtemisDetails,
+							};
+						}
+						
+						// Create editor script that replaces "Detailed description." with actual body
+						editorScript = join(tmpdir(), `artemis-editor-${Date.now()}.sh`);
+						// Use printf to properly escape the body text for sed
+						const scriptContent = `#!/bin/bash
+# Read the body from a heredoc and use it to replace "Detailed description."
+BODY=$(cat << 'BODY_END'
+${params.body}
+BODY_END
+)
+# Replace "Detailed description." with the actual body
+sed -i "s/Detailed description\\./$(printf '%s\\n' "$BODY" | sed 's/[&/\\]/\\\\&/g')/" "$1"
+`;
+						await writeFile(editorScript, scriptContent, { mode: 0o755 });
+						
+						args.push("-m", params.subject);
+						cmdString = `EDITOR="${editorScript}" git artemis ${args.join(" ")}`;
+					}
+					
+				} else if (params.command === "show") {
 					if (!params.issueId) {
 						return {
 							content: [{
 								type: "text",
-								text: "Error: 'issueId' required for 'show' action"
+								text: "Error: issueId required for 'show' command"
 							}],
 							details: {
-								action: params.action,
-								exitCode: 1,
 								command: "git artemis show",
-								error: "missing issueId"
+								stdout: "",
+								stderr: "missing issueId",
+								exitCode: 1,
 							} as ArtemisDetails,
 						};
 					}
-					args.push(params.issueId);
-					break;
 					
-				case "update":
-					if (!params.issueId || !params.properties || params.properties.length === 0) {
+					args.push("show", params.issueId);
+					if (params.commentNumber !== undefined) {
+						args.push(String(params.commentNumber));
+					}
+					cmdString = `git artemis ${args.join(" ")}`;
+					
+				} else if (params.command === "close") {
+					if (!params.issueId) {
 						return {
 							content: [{
 								type: "text",
-								text: "Error: 'issueId' and 'properties' required for 'update' action"
+								text: "Error: issueId required for 'close' command"
 							}],
 							details: {
-								action: params.action,
+								command: "git artemis add <id> -p ...",
+								stdout: "",
+								stderr: "missing issueId",
 								exitCode: 1,
-								command: "git artemis add",
-								error: "missing issueId or properties"
 							} as ArtemisDetails,
 						};
 					}
-					// Update is implemented via 'add' with properties
-					args[0] = "add";
-					args.push(params.issueId);
-					params.properties.forEach(prop => {
-						args.push("-p", prop);
-					});
-					if (params.noPropertyComment) args.push("-n");
-					break;
-			}
+					
+					args.push("add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n");
+					cmdString = `git artemis ${args.join(" ")}`;
+					
+				} else {
+					return {
+						content: [{
+							type: "text",
+							text: `Error: unknown command '${params.command}'`
+						}],
+						details: {
+							command: "git artemis",
+							stdout: "",
+							stderr: "unknown command",
+							exitCode: 1,
+						} as ArtemisDetails,
+					};
+				}
 
-			const command = `git artemis ${args.join(" ")}`;
+				// Show progress
+				onUpdate?.({
+					content: [{ type: "text", text: `Running: ${cmdString}` }],
+				});
 
-			// Show progress
-			onUpdate?.({
-				content: [{ type: "text", text: `Running: ${command}` }],
-			});
+				// Execute command
+				const env = { ...process.env };
+				if (editorScript) {
+					env.EDITOR = editorScript;
+				}
+				
+				const result = await pi.exec("git", ["artemis", ...args], {
+					signal,
+					cwd: ctx.cwd,
+					env,
+				});
 
-			// Execute command
-			const result = await pi.exec("git", ["artemis", ...args], {
-				signal,
-				cwd: ctx.cwd,
-			});
+				// Check for cancellation
+				if (signal?.aborted) {
+					return {
+						content: [{ type: "text", text: "Cancelled" }],
+						details: {
+							command: cmdString,
+							stdout: "",
+							stderr: "cancelled",
+							exitCode: -1,
+						} as ArtemisDetails,
+					};
+				}
 
-			// Check for cancellation
-			if (signal?.aborted) {
+				const stdout = result.stdout.trim();
+				const stderr = result.stderr.trim();
+				const success = result.code === 0;
+
+				// Return output
 				return {
-					content: [{ type: "text", text: "Cancelled" }],
+					content: [{
+						type: "text",
+						text: success ? (stdout || "Success") : `Error: ${stderr || stdout || "Command failed"}`,
+					}],
 					details: {
-						action: params.action,
-						exitCode: -1,
-						command,
-						error: "cancelled"
+						command: cmdString,
+						stdout,
+						stderr,
+						exitCode: result.code,
 					} as ArtemisDetails,
 				};
-			}
-
-			const stdout = result.stdout.trim();
-			const stderr = result.stderr.trim();
-			const success = result.code === 0;
-
-			// Format response based on action and success
-			let responseText = "";
-			if (success) {
-				if (params.action === "list") {
-					responseText = stdout || "No issues found";
-				} else if (params.action === "show") {
-					responseText = stdout || "Issue details not available";
-				} else if (params.action === "add") {
-					responseText = stdout || "Issue created successfully";
-				} else if (params.action === "update") {
-					responseText = stdout || `Issue ${params.issueId} updated`;
+				
+			} finally {
+				// Clean up editor script
+				if (editorScript) {
+					try {
+						await unlink(editorScript);
+					} catch {
+						// Ignore cleanup errors
+					}
 				}
-			} else {
-				responseText = `Error: ${stderr || stdout || "Command failed"}`;
 			}
-
-			return {
-				content: [{
-					type: "text",
-					text: responseText,
-				}],
-				details: {
-					action: params.action,
-					stdout,
-					stderr,
-					exitCode: result.code,
-					command,
-					error: success ? undefined : (stderr || "command failed"),
-				} as ArtemisDetails,
-			};
 		},
 
 		renderCall(args, theme) {
-			let text = theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", args.action);
+			let text = theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", args.command);
 			
 			if (args.issueId) {
 				text += " " + theme.fg("muted", args.issueId);
 			}
 			
-			if (args.message) {
-				text += " " + theme.fg("dim", `"${truncateToWidth(args.message, 40)}"`);
+			if (args.subject) {
+				text += " " + theme.fg("dim", `"${args.subject}"`);
 			}
 			
-			if (args.property) {
-				text += " " + theme.fg("dim", `[${args.property}]`);
-			}
-			
-			if (args.properties && args.properties.length > 0) {
-				text += " " + theme.fg("dim", `[${args.properties.join(", ")}]`);
+			if (args.commentNumber !== undefined) {
+				text += " " + theme.fg("dim", `#${args.commentNumber}`);
 			}
 			
 			return new Text(text, 0, 0);
@@ -274,69 +321,61 @@ Common use cases:
 				return new Text(text?.type === "text" ? text.text : "", 0, 0);
 			}
 
-			if (details.error) {
-				return new Text(theme.fg("error", `✗ Error: ${details.error}`), 0, 0);
+			const success = details.exitCode === 0;
+			const output = details.stdout || details.stderr;
+
+			if (!success) {
+				return new Text(theme.fg("error", `✗ ${output}`), 0, 0);
 			}
 
-			const text = result.content[0];
-			const output = text?.type === "text" ? text.text : "";
-			
-			// For list action, show formatted output
-			if (details.action === "list") {
-				if (!output || output === "No issues found") {
+			// For list command
+			if (details.command.includes("list")) {
+				if (!output) {
 					return new Text(theme.fg("dim", "No issues found"), 0, 0);
 				}
 				
-				let displayText = theme.fg("success", "✓ Issues:");
-				const lines = output.split("\n");
+				const lines = output.split("\n").filter(l => l.trim());
 				const displayLines = expanded ? lines : lines.slice(0, 10);
 				
+				let text = theme.fg("success", "✓ ") + theme.fg("muted", `${lines.length} issue(s):`);
 				for (const line of displayLines) {
-					if (line.trim()) {
-						// Highlight issue IDs in the output
-						const highlighted = line.replace(/([a-f0-9]{7,})/g, (match) => 
-							theme.fg("accent", match)
-						);
-						displayText += "\n" + theme.fg("muted", highlighted);
-					}
+					// Highlight issue IDs
+					const highlighted = line.replace(/([a-f0-9]{16})/g, (id) => theme.fg("accent", id));
+					text += "\n" + theme.fg("muted", highlighted);
 				}
 				
 				if (!expanded && lines.length > 10) {
-					displayText += "\n" + theme.fg("dim", `... ${lines.length - 10} more issues`);
+					text += "\n" + theme.fg("dim", `... ${lines.length - 10} more`);
 				}
 				
-				return new Text(displayText, 0, 0);
+				return new Text(text, 0, 0);
 			}
 			
-			// For show action, display issue details
-			if (details.action === "show") {
-				let displayText = theme.fg("success", "✓ Issue details:");
+			// For show command
+			if (details.command.includes("show")) {
+				const lines = output.split("\n");
+				const displayLines = expanded ? lines : lines.slice(0, 8);
 				
-				if (expanded) {
-					displayText += "\n" + theme.fg("muted", output);
-				} else {
-					// Show first few lines in collapsed view
-					const lines = output.split("\n");
-					const preview = lines.slice(0, 5).join("\n");
-					displayText += "\n" + theme.fg("muted", preview);
-					if (lines.length > 5) {
-						displayText += "\n" + theme.fg("dim", `... ${lines.length - 5} more lines`);
-					}
+				let text = theme.fg("success", "✓");
+				text += "\n" + theme.fg("muted", displayLines.join("\n"));
+				
+				if (!expanded && lines.length > 8) {
+					text += "\n" + theme.fg("dim", `... ${lines.length - 8} more lines`);
 				}
 				
-				return new Text(displayText, 0, 0);
+				return new Text(text, 0, 0);
 			}
 			
-			// For add/update actions, show success message
-			if (details.action === "add" || details.action === "update") {
-				return new Text(
-					theme.fg("success", "✓ ") + theme.fg("muted", output),
-					0,
-					0
-				);
+			// For add/close commands - extract issue ID if present
+			if (details.command.includes("add")) {
+				const issueIdMatch = output.match(/([a-f0-9]{16})/);
+				if (issueIdMatch) {
+					const issueId = theme.fg("accent", issueIdMatch[1]);
+					return new Text(theme.fg("success", "✓ ") + theme.fg("muted", output.replace(issueIdMatch[1], issueId)), 0, 0);
+				}
 			}
 			
-			return new Text(theme.fg("muted", output), 0, 0);
+			return new Text(theme.fg("success", "✓ ") + theme.fg("muted", output), 0, 0);
 		},
 	});
 }

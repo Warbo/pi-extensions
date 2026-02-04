@@ -56,73 +56,68 @@ pi -e /path/to/extensions/artemis/index.ts
 
 ## Usage
 
-The extension provides a single tool: `git_artemis`
+The extension provides a single tool: `git_artemis` that wraps the git artemis CLI.
 
-### Actions
+### Commands
 
-#### List Issues
+#### List Issues (`git artemis list`)
 
-```
-List all open issues:
-git_artemis(action="list")
-
-List all issues (including closed):
-git_artemis(action="list", all=true)
-
-Filter by property:
-git_artemis(action="list", property="state=new")
-
-List available values for a property:
-git_artemis(action="list", property="state")
-
-Order by latest activity:
-git_artemis(action="list", order="latest")
-```
-
-#### Create Issue
+Lists issues with `state=new` by default:
 
 ```
-Create a new issue:
+List new issues (default):
+git_artemis(command="list")
+
+List all issues:
+git_artemis(command="list", all=true)
+```
+
+#### Create Issue (`git artemis add`)
+
+Creates a new issue with subject and body:
+
+```
 git_artemis(
-    action="add",
-    message="Memory leak in worker process",
-    comment="Observed when processing large files. Need to investigate buffer management."
-)
-
-Create with properties:
-git_artemis(
-    action="add",
-    message="Refactor authentication module",
-    properties=["priority=high", "type=refactor"]
+    command="add",
+    subject="Memory leak in worker process",
+    body="Observed when processing large files over 1GB. Memory usage grows unbounded and never gets freed."
 )
 ```
 
-#### Show Issue
+#### Add Comment (`git artemis add <id>`)
+
+Adds a comment to an existing issue:
 
 ```
-View full issue details:
-git_artemis(action="show", issueId="abc1234")
-```
-
-#### Update Properties
-
-```
-Close an issue:
 git_artemis(
-    action="update",
+    command="add",
     issueId="abc1234",
-    properties=["state=resolved", "resolution=fixed"]
+    commentBody="Found the root cause - circular reference in cache invalidation"
 )
+```
 
-Update with custom comment (via separate git artemis command):
-# First update properties
-git_artemis(
-    action="update",
-    issueId="abc1234",
-    properties=["priority=high"],
-    noPropertyComment=true
-)
-# Note: Adding custom comments requires interactive editor
+#### Show Issue (`git artemis show <id>`)
+
+Shows an issue (without comments):
+
+```
+git_artemis(command="show", issueId="abc1234")
+```
+
+#### Show Comment (`git artemis show <id> <n>`)
+
+Shows a specific comment:
+
+```
+git_artemis(command="show", issueId="abc1234", commentNumber=0)
+```
+
+#### Close Issue (`git artemis add <id> -p state=resolved -p resolution=fixed`)
+
+Closes an issue:
+
+```
+git_artemis(command="close", issueId="abc1234")
 ```
 
 ## Example Workflows
@@ -134,7 +129,11 @@ When the LLM finds an issue during code review:
 ```
 User: "Review the authentication code for security issues"
 
-LLM: [uses git_artemis to create issue]
+LLM: [uses git_artemis(
+    command="add",
+    subject="SQL injection in auth module",
+    body="Found potential SQL injection in user_login() function at line 42. User input is concatenated directly into query."
+)]
 "I found a potential SQL injection vulnerability. I've logged it as issue abc1234."
 ```
 
@@ -145,11 +144,26 @@ Finding work to do:
 ```
 User: "What issues need attention?"
 
-LLM: [uses git_artemis(action="list", property="state=new")]
+LLM: [uses git_artemis(command="list")]
 "There are 3 open issues:
 1. abc1234 - SQL injection in auth
 2. def5678 - Memory leak in worker
 3. ghi9012 - Refactor config loading"
+```
+
+### Adding Investigation Notes
+
+Documenting findings on an issue:
+
+```
+User: "I found the cause of issue def5678"
+
+LLM: [uses git_artemis(
+    command="add",
+    issueId="def5678",
+    commentBody="Root cause identified: circular reference in cache.invalidate() prevents garbage collection. Fix requires breaking the cycle."
+)]
+"I've added your findings to issue def5678."
 ```
 
 ### Closing Issues
@@ -159,31 +173,25 @@ After fixing a problem:
 ```
 User: "I've fixed the memory leak"
 
-LLM: [uses git_artemis to close issue]
+LLM: [uses git_artemis(command="close", issueId="def5678")]
 "Great! I've closed issue def5678 and marked it as resolved/fixed."
 ```
 
 ## Tips
 
-1. **Be specific**: Provide detailed descriptions when creating issues
-2. **Use properties**: Leverage properties like `priority`, `type`, `state` for organization
-3. **Check first**: Use `list` to see existing issues before creating duplicates
-4. **Reference commits**: Include commit hashes when fixing issues
+1. **Be specific**: Provide detailed subject and body when creating issues
+2. **Check existing**: Use `list` to see existing issues before creating duplicates
+3. **Add context**: Use comments to add investigation notes, findings, or progress updates
+4. **Reference commits**: Include commit hashes in issue bodies or comments when relevant
+5. **Close when done**: Use the `close` command when issues are resolved
 
-## Properties
+## Issue States
 
-Common artemis properties (customizable per repo):
+Issues start with `state=new` and can be closed with the `close` command, which sets:
+- `state=resolved`
+- `resolution=fixed`
 
-- `state`: new, assigned, resolved, closed, etc.
-- `resolution`: fixed, wontfix, duplicate, etc.
-- `priority`: low, normal, high, critical
-- `type`: bug, feature, refactor, documentation
-- `assigned`: username or email
-
-To see available values for any property:
-```
-git_artemis(action="list", property="state")
-```
+This is the only state transition exposed by the tool. For other property management, use the `git artemis` command directly from your shell.
 
 ## Rendering
 
@@ -196,9 +204,9 @@ The extension provides custom TUI rendering:
 
 ## Limitations
 
-- Cannot add comments to existing issues via CLI (artemis requires interactive editor)
 - Cannot handle binary attachments
-- No support for filters (`.issues/.filter*` files)
+- No support for custom properties (only state=resolved/resolution=fixed via `close`)
+- No support for date filters or `.issues/.filter*` files
 - Requires a git repository with artemis initialized
 
 ## Troubleshooting
@@ -226,8 +234,9 @@ This is normal for a fresh repository. Create your first issue:
 
 ```
 git_artemis(
-    action="add",
-    message="First issue"
+    command="add",
+    subject="First issue",
+    body="Testing artemis integration"
 )
 ```
 
