@@ -23,6 +23,7 @@ import { Type } from "@sinclair/typebox";
 import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createIssueEditorScript, createCommentEditorScript, writeEditorScript } from "./editor.mjs";
 
 interface ArtemisDetails {
 	command: string;
@@ -128,18 +129,13 @@ Use this to log problems, track tasks, and manage issue status.`,
 							};
 						}
 						
-						// Create editor script that replaces "Detailed description." with actual comment body
-						editorScript = join(tmpdir(), `artemis-editor-${Date.now()}.sh`);
-						const scriptContent = `#!/bin/bash
-# Read the body from a heredoc and use it to replace "Detailed description."
-BODY=$(cat << 'BODY_END'
-${params.commentBody}
-BODY_END
-)
-# Replace "Detailed description." with the actual body
-sed -i "s/Detailed description\\./$(printf '%s\\n' "$BODY" | sed 's/[&/\\]/\\\\&/g')/" "$1"
-`;
-						await writeFile(editorScript, scriptContent, { mode: 0o755 });
+						// Write body to a temporary file
+						const bodyFile = join(tmpdir(), `artemis-body-${Date.now()}.txt`);
+						await writeFile(bodyFile, params.commentBody);
+						
+						// Create editor script
+						const scriptContent = createCommentEditorScript(bodyFile);
+						editorScript = await writeEditorScript(scriptContent);
 						
 						args.push(params.issueId);
 						cmdString = `EDITOR="${editorScript}" git artemis ${args.join(" ")}`;
@@ -161,22 +157,19 @@ sed -i "s/Detailed description\\./$(printf '%s\\n' "$BODY" | sed 's/[&/\\]/\\\\&
 							};
 						}
 						
-						// Create editor script that replaces "Detailed description." with actual body
-						editorScript = join(tmpdir(), `artemis-editor-${Date.now()}.sh`);
-						// Use printf to properly escape the body text for sed
-						const scriptContent = `#!/bin/bash
-# Read the body from a heredoc and use it to replace "Detailed description."
-BODY=$(cat << 'BODY_END'
-${params.body}
-BODY_END
-)
-# Replace "Detailed description." with the actual body
-sed -i "s/Detailed description\\./$(printf '%s\\n' "$BODY" | sed 's/[&/\\]/\\\\&/g')/" "$1"
-`;
-						await writeFile(editorScript, scriptContent, { mode: 0o755 });
+						// Write body to a temporary file
+						const bodyFile = join(tmpdir(), `artemis-body-${Date.now()}.txt`);
+						await writeFile(bodyFile, params.body);
 						
-						args.push("-m", params.subject);
-						cmdString = `EDITOR="${editorScript}" git artemis ${args.join(" ")}`;
+						// Write subject to a temporary file
+						const subjectFile = join(tmpdir(), `artemis-subject-${Date.now()}.txt`);
+						await writeFile(subjectFile, params.subject);
+						
+						// Create editor script
+						const scriptContent = createIssueEditorScript(subjectFile, bodyFile);
+						editorScript = await writeEditorScript(scriptContent);
+						
+						cmdString = `EDITOR="${editorScript}" git artemis add`;
 					}
 					
 				} else if (params.command === "show") {

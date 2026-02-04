@@ -757,8 +757,8 @@ async function runTest(name, testFn) {
 		pi.kill();
 		await new Promise(resolve => pi.on("close", resolve));
 		
-		// Verify the comment body is stored by showing comment 0
-		const showResult = spawn("git", ["artemis", "show", issueId, "0"], {
+		// Verify the comment body is stored by showing comment 1 (first comment)
+		const showResult = spawn("git", ["artemis", "show", issueId, "1"], {
 			cwd: tempDir,
 			stdio: "pipe"
 		});
