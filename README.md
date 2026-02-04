@@ -4,6 +4,7 @@ Extensions for [pi](https://github.com/badlogic/pi) coding agent.
 
 ## Available Extensions
 
+- **[artemis](extensions/artemis/README.md)** - Git-based issue tracker integration for managing issues, tasks, and notes
 - **[bash-permission](extensions/bash-permission/README.md)** - Prompts for confirmation before executing bash commands
 
 ## Installation (Nix + Home Manager)
