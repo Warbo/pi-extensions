@@ -46,5 +46,4 @@ tmp/
 temp/
 *.tmp
 
-# Config files (user-specific)
-bash-permission.json
+.pi
