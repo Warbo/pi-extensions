@@ -73,6 +73,29 @@ function streamDummyLLM(
 				throw new Error("Aborted");
 			}
 
+			// Check if the last message is a tool result with a blocked/error status
+			const lastMessage = context.messages[context.messages.length - 1];
+			
+			// If the most recent message is a tool result indicating blocked/error, don't repeat the tool call
+			if (lastMessage && (lastMessage.role === "tool" || lastMessage.role === "toolResult")) {
+				const toolContent = typeof lastMessage.content === "string" 
+					? lastMessage.content 
+					: lastMessage.content?.find((c) => c.type === "text")?.text ?? "";
+				
+				// If the tool was blocked or errored, respond accordingly
+				if (toolContent.toLowerCase().includes("blocked") || toolContent.toLowerCase().includes("error")) {
+					stream.push({ type: "start", partial: output });
+					const textContent = { type: "text" as const, text: "I understand the command was blocked." };
+					output.content.push(textContent);
+					stream.push({ type: "text_start", contentIndex: 0, partial: output });
+					stream.push({ type: "text_delta", contentIndex: 0, delta: textContent.text, partial: output });
+					stream.push({ type: "text_end", contentIndex: 0, content: textContent.text, partial: output });
+					stream.push({ type: "done", reason: "stop", message: output });
+					stream.end();
+					return stream;
+				}
+			}
+
 			// Get the last user message
 			const lastUserMsg = context.messages.findLast((m) => m.role === "user");
 			const userText =

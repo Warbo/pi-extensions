@@ -31,8 +31,24 @@ const DEFAULT_CONFIG: Config = {
 	confirmTimeout: 30000, // 30 seconds default
 };
 
+const CHOICES = {
+	DENY_ONCE: "Deny once",
+	ALLOW_ONCE: "Allow once",
+	DENY_PREFIX: "Deny prefix",
+	ALLOW_EXACT: "Allow exact",
+	ALLOW_PREFIX: "Allow prefix",
+} as const;
+
+const ACTIONS = {
+	VIEW_ALL_RULES: "View all rules",
+	CLEAR_ALL_RULES: "Clear all rules",
+	OPEN_CONFIG_FILE: "Open config file",
+	CANCEL: "Cancel",
+} as const;
+
 export default function (pi: ExtensionAPI) {
-	const configPath = path.join(os.homedir(), ".config", "pi", "bash-permission.json");
+	const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+	const configPath = path.join(configHome, "pi", "bash-permission.json");
 	let config: Config = { ...DEFAULT_CONFIG };
 
 	// Load config on startup
@@ -119,15 +135,15 @@ export default function (pi: ExtensionAPI) {
 
 		// Show confirmation dialog
 		const choices = [
-			"❌ Deny once",
-			"✅ Allow once",
-			"🚫 Deny prefix",
-			"✓ Allow exact",
-			"✓✓ Allow prefix",
+			CHOICES.DENY_ONCE,
+			CHOICES.ALLOW_ONCE,
+			CHOICES.DENY_PREFIX,
+			CHOICES.ALLOW_EXACT,
+			CHOICES.ALLOW_PREFIX,
 		];
 
 		const choice = await ctx.ui.select(
-			`🔒 Bash Permission Required\n\nCommand: ${command}\n\nWhat would you like to do?`,
+			`Bash Permission Required\n\nCommand: ${command}\n\nWhat would you like to do?`,
 			choices,
 			{ timeout: config.confirmTimeout }
 		);
@@ -139,15 +155,15 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		switch (choice) {
-			case "❌ Deny once":
+			case CHOICES.DENY_ONCE:
 				ctx.ui.notify("Command denied", "info");
 				return { block: true, reason: "Denied by user" };
 
-			case "✅ Allow once":
+			case CHOICES.ALLOW_ONCE:
 				ctx.ui.notify("Command allowed (one-time)", "info");
 				return undefined;
 
-			case "🚫 Deny prefix": {
+			case CHOICES.DENY_PREFIX: {
 				const prefix = await ctx.ui.input(
 					"Enter command prefix to deny:",
 					command
@@ -160,13 +176,13 @@ export default function (pi: ExtensionAPI) {
 				return { block: true, reason: "Denied by user (prefix saved)" };
 			}
 
-			case "✓ Allow exact":
+			case CHOICES.ALLOW_EXACT:
 				config.allowedExact.push(command);
 				saveConfig();
 				ctx.ui.notify("Command allowed and saved (exact match)", "success");
 				return undefined;
 
-			case "✓✓ Allow prefix": {
+			case CHOICES.ALLOW_PREFIX: {
 				const prefix = await ctx.ui.input(
 					"Enter command prefix to allow:",
 					command
@@ -199,23 +215,23 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const actions = [
-				"📋 View all rules",
-				"🗑️  Clear all rules",
-				"📂 Open config file",
-				"🔙 Cancel",
+				ACTIONS.VIEW_ALL_RULES,
+				ACTIONS.CLEAR_ALL_RULES,
+				ACTIONS.OPEN_CONFIG_FILE,
+				ACTIONS.CANCEL,
 			];
 
 			const action = await ctx.ui.select("Bash Permissions Management", actions);
 
-			if (!action || action === "🔙 Cancel") {
+			if (!action || action === ACTIONS.CANCEL) {
 				return;
 			}
 
-			if (action === "📋 View all rules") {
+			if (action === ACTIONS.VIEW_ALL_RULES) {
 				let message = "Current Permission Rules:\n\n";
 				
 				if (config.allowedExact.length > 0) {
-					message += "✅ Allowed (exact):\n";
+					message += "Allowed (exact):\n";
 					config.allowedExact.forEach((cmd) => {
 						message += `  - ${cmd}\n`;
 					});
@@ -223,7 +239,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				
 				if (config.allowedPrefixes.length > 0) {
-					message += "✅ Allowed (prefix):\n";
+					message += "Allowed (prefix):\n";
 					config.allowedPrefixes.forEach((prefix) => {
 						message += `  - ${prefix}*\n`;
 					});
@@ -231,7 +247,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				
 				if (config.deniedExact.length > 0) {
-					message += "❌ Denied (exact):\n";
+					message += "Denied (exact):\n";
 					config.deniedExact.forEach((cmd) => {
 						message += `  - ${cmd}\n`;
 					});
@@ -239,7 +255,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				
 				if (config.deniedPrefixes.length > 0) {
-					message += "❌ Denied (prefix):\n";
+					message += "Denied (prefix):\n";
 					config.deniedPrefixes.forEach((prefix) => {
 						message += `  - ${prefix}*\n`;
 					});
@@ -255,7 +271,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				ctx.ui.notify(message, "info");
-			} else if (action === "🗑️  Clear all rules") {
+			} else if (action === ACTIONS.CLEAR_ALL_RULES) {
 				const confirmed = await ctx.ui.confirm(
 					"Clear all rules?",
 					"This will remove all saved allow/deny rules. You will be asked to confirm all commands again."
@@ -265,7 +281,7 @@ export default function (pi: ExtensionAPI) {
 					saveConfig();
 					ctx.ui.notify("All permission rules cleared", "success");
 				}
-			} else if (action === "📂 Open config file") {
+			} else if (action === ACTIONS.OPEN_CONFIG_FILE) {
 				ctx.ui.notify(`Config file location:\n${configPath}`, "info");
 			}
 		},
