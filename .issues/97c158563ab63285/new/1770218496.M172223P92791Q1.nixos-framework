@@ -1,0 +1,156 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 15:21:36 +0000
+State: new
+Subject: Create "conventions" extension for on-demand context steering
+Message-Id: <97c158563ab63285-0-artemis@nixos-framework>
+
+## Overview
+Create a pi extension that provides the AI agent with on-demand access to user conventions and preferences, organized as a queryable knowledge tree. Instead of front-loading massive amounts of context, the agent can selectively explore relevant sections as needed.
+
+## Motivation
+- Avoid cluttering context with irrelevant convention details
+- Allow agent to discover conventions when relevant to the task
+- Easy to maintain (just markdown files in directories)
+- Scalable to many different topics and sub-topics
+- Reusable content via symlinks
+
+## User-Facing API
+The agent would see a custom tool, e.g.:
+```
+conventions(path?: string)
+```
+
+**Behavior:**
+- No path or empty path: Returns list of top-level topics
+- With path (e.g., "writing code/python"): Returns:
+  - Content of corresponding markdown file (if exists)
+  - List of available sub-sections (if any)
+
+**Example interactions:**
+```
+conventions() 
+→ ["debugging", "writing code", "writing prose"]
+
+conventions("writing code")
+→ Content: [markdown content from "writing code.md"]
+→ Subsections: ["preferred languages", "python", "haskell", "nix"]
+
+conventions("writing code/python")
+→ Content: [markdown content]
+→ Subsections: ["debugging"]
+
+conventions("writing code/python/debugging")
+→ Content: [markdown content, possibly via symlink]
+→ Subsections: []
+```
+
+## Storage Structure
+Conventions stored as markdown files in a directory tree:
+- Files represent content (e.g., "debugging.md", "writing code.md")
+- Directories represent sections with subsections
+- Symlinks allow content to appear in multiple places without duplication
+
+**Example on-disk layout:**
+```
+conventions/
+  toplevel.md                    # Optional root content
+  toplevel/
+    debugging.md
+    debugging/
+      haskell.md
+      python.md
+      vue.md
+      web.md
+    writing code.md
+    writing code/
+      preferred languages.md
+      python.md
+      python/
+        debugging.md -> ../../debugging/python.md  # Symlink
+      haskell/
+        tooling.md
+        debugging.md -> ../../debugging/haskell.md  # Symlink
+        personal projects.md
+        work projects.md
+      nix.md
+      nix/
+        repo layout.md
+    writing prose.md
+```
+
+## Implementation Considerations
+
+**Path handling:**
+- Use "/" as path separator
+- Handle spaces in section names (e.g., "writing code")
+- Normalize paths (remove trailing slashes, handle ..)
+- Case-sensitive or case-insensitive? (recommend case-insensitive)
+
+**Symlink resolution:**
+- Follow symlinks transparently
+- Detect and prevent infinite loops
+- Keep symlinks relative when possible for portability
+
+**Configuration:**
+- Convention root directory configurable in pi config
+- Default: `~/.config/pi/conventions/` or `~/conventions/`
+- Could support multiple convention sets?
+
+**Error handling:**
+- Path doesn't exist → helpful error, suggest nearby matches?
+- Malformed paths → validation error
+- Symlink loops → clear error message
+
+**Tool description:**
+The tool should clearly explain to the agent:
+- It provides access to user conventions and preferences
+- Organized hierarchically by topic
+- Agent should query relevant sections when working on tasks
+- Start broad, then drill down as needed
+
+**Output format:**
+Consider structured output:
+```json
+{
+  "path": "writing code/python",
+  "content": "..markdown content..",
+  "subsections": ["debugging", "testing", "style"],
+  "hasContent": true
+}
+```
+
+## Future Enhancements
+- Fuzzy search across all convention files
+- Auto-suggest relevant sections based on current task
+- Template variables in markdown (e.g., ${username})
+- Support for non-markdown formats (JSON, YAML)
+- Caching for performance
+- Web UI for browsing/editing conventions
+- Share convention sets between users/teams
+
+## Example Use Cases
+
+**Scenario 1: Python debugging**
+- User asks to debug Python code
+- Agent queries: `conventions("debugging/python")`
+- Gets specific Python debugging preferences
+- Also might check `conventions("writing code/python")`
+
+**Scenario 2: New Haskell project**
+- User asks to start new Haskell project
+- Agent queries: `conventions("writing code/preferred languages")` to check if Haskell is preferred
+- Then: `conventions("writing code/haskell")` for general conventions
+- Then: `conventions("writing code/haskell/personal projects")` for project-specific conventions
+
+**Scenario 3: Nix repository layout**
+- Working on Nix code
+- Agent queries: `conventions("writing code/nix/repo layout")`
+- Gets specific guidance on how to structure the repo
+
+## Technical Notes
+- Extension type: Custom tool
+- Implementation: TypeScript/JavaScript tool function
+- File system access required
+- Should work in pi's tool framework
+- Consider async file I/O for performance
+

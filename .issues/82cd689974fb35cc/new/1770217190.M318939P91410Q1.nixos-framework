@@ -1,0 +1,18 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 14:59:50 +0000
+Subject: Re: comment
+Message-Id: <82cd689974fb35cc-908a3eb353579d35-artemis@nixos-framework>
+References: <82cd689974fb35cc-0-artemis@nixos-framework>
+In-Reply-To: <82cd689974fb35cc-0-artemis@nixos-framework>
+
+## Scope: What NOT to Include
+
+**Org-mode integration**: Skip this. I don't use Org-mode heavily. For project-specific TODOs and issue tracking, we should use git artemis instead.
+
+**Magit/Git operations**: Don't need dedicated commands. On the rare occasions when git operations through Emacs would be useful, pi can just evaluate the appropriate elisp code (e.g., `(magit-status)`).
+
+**Frame/window management**: Similarly, don't need dedicated commands for saving/restoring window configurations, managing frames, etc. These are edge cases that can be handled via generic elisp evaluation when needed.
+
+**Generic elisp evaluation**: DO include this as a fallback. When pi needs to do something Emacs-related that doesn't have a dedicated command, it can execute arbitrary elisp and get the results back. This provides flexibility without bloating the command set.
+
+Focus on the core workflow: buffer context queries, buffer editing, LSP integration, and navigation. Keep the API lean.

@@ -1,0 +1,20 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 14:59:32 +0000
+Subject: Re: comment
+Message-Id: <82cd689974fb35cc-adea7d5f7650fd1c-artemis@nixos-framework>
+References: <82cd689974fb35cc-0-artemis@nixos-framework>
+In-Reply-To: <82cd689974fb35cc-0-artemis@nixos-framework>
+
+## LSP Integration via Emacs
+
+LSP is notoriously difficult to configure. Since it's already set up and working in Emacs, pi should leverage that rather than requiring separate LSP setup.
+
+Useful LSP queries via Emacs:
+- Go to definition (what file/line defines this symbol?)
+- Find references (where is this used?)
+- Get hover documentation
+- List diagnostics (errors/warnings) for current buffer or project
+- Get symbol information (type, signature, etc.)
+- Code actions available at point
+
+This avoids duplication of LSP infrastructure and ensures pi sees the same language intelligence that the user sees in their editor.

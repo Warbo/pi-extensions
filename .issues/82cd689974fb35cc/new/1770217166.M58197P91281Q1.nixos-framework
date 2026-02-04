@@ -1,0 +1,22 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 14:59:26 +0000
+Subject: Re: comment
+Message-Id: <82cd689974fb35cc-d7f0ebc145ac0855-artemis@nixos-framework>
+References: <82cd689974fb35cc-0-artemis@nixos-framework>
+In-Reply-To: <82cd689974fb35cc-0-artemis@nixos-framework>
+
+## Critical: Edit Buffers, Not Files
+
+When collaborating with pi on a file, pi MUST edit the Emacs buffer directly rather than modifying the file on disk. 
+
+If pi edits the file on disk while the user has it open in Emacs, we risk:
+- Overwriting each other's changes
+- Confusing "file modified on disk" prompts
+- Out-of-sync state between buffer and file
+
+Commands needed:
+- Replace buffer content (whole buffer or regions)
+- Insert text at point or specific positions
+- Apply diffs/patches to buffer content
+
+The buffer-editing approach keeps everything synchronized and allows immediate visual feedback in the editor.

@@ -1,0 +1,24 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 14:59:41 +0000
+Subject: Re: comment
+Message-Id: <82cd689974fb35cc-a78d0cf7e430ba30-artemis@nixos-framework>
+References: <82cd689974fb35cc-0-artemis@nixos-framework>
+In-Reply-To: <82cd689974fb35cc-0-artemis@nixos-framework>
+
+## Navigation: Opening Files and Moving Point
+
+Pi should be able to open files and position the cursor for user attention. Use cases:
+
+**Context restoration**: "Where were we working on ticket XYZ?" → Pi opens relevant files and jumps to the sections that were being edited.
+
+**Bug hunting**: "Find the bug in the authentication code" → Pi analyzes, finds the issue, opens the file and moves point to the problematic line.
+
+**Code review**: "Show me the implementation of function X" → Pi opens the file and navigates to the function definition.
+
+Commands needed:
+- Open file (or switch to buffer if already open)
+- Move point to specific line/column
+- Optionally highlight/select a region for attention
+- Open multiple files (e.g., split windows with related code)
+
+This creates a seamless experience where pi can "show" rather than just "tell" - directly guiding the user's attention to relevant code.

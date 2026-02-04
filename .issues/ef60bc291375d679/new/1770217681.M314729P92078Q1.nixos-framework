@@ -1,0 +1,46 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 15:08:01 +0000
+State: new
+Subject: Create file watcher extension for AI marker annotations (# AI! / # AI?)
+Message-Id: <ef60bc291375d679-0-artemis@nixos-framework>
+
+Create a pi extension that watches files in a project and automatically processes special AI markers.
+
+## Overview
+The extension should watch files in the project (respecting .gitignore) and detect when a file contains the markers '# AI!' or '# AI?'. When detected, it should extract that part of the file with surrounding context and send it to the LLM for processing.
+
+## Key Features
+
+1. **File Watching**
+   - Watch all files in the project
+   - Honor .gitignore rules to avoid watching ignored files
+   - Detect when files contain '# AI!' or '# AI?' markers
+
+2. **Smart Context Extraction**
+   - Extract the marked line plus surrounding lines for context
+   - Send only a snippet (not the entire file) to preserve LLM context budget
+   - Include enough surrounding context for the LLM to understand the request
+
+3. **LLM Communication**
+   - Inform the LLM that it's receiving a snippet (not a full file)
+   - Provide line numbers for the snippet
+   - Provide approximate file size/total line count
+   - Allow LLM to request reading more of the file if needed (e.g., if instructions appear cut off)
+
+4. **Context Awareness**
+   - The LLM should examine surrounding context (likely comments with instructions/questions)
+   - The LLM should understand what the user is requesting and action it
+   - Support both imperative ('# AI!') and interrogative ('# AI?') markers
+
+## Use Cases
+- Developer adds '# AI! implement this function' in their code
+- Developer adds '# AI? how should I structure this?' for questions
+- Automatic processing without manually copying code to the agent
+- Efficient context usage by sending only relevant snippets
+
+## Implementation Considerations
+- Should the markers be configurable? (different languages use different comment styles)
+- How many surrounding lines should be included by default?
+- Should the extension automatically remove the marker after processing?
+- How to handle multiple markers in the same file?
+- UI/notification when markers are detected and being processed

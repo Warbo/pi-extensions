@@ -1,0 +1,18 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 14:59:18 +0000
+Subject: Re: comment
+Message-Id: <82cd689974fb35cc-abde8170709e4ce9-artemis@nixos-framework>
+References: <82cd689974fb35cc-0-artemis@nixos-framework>
+In-Reply-To: <82cd689974fb35cc-0-artemis@nixos-framework>
+
+## Priority: Interactive Buffer Context
+
+The primary use case is helping while working in a specific file. Essential queries:
+- Current buffer filename
+- Point position (line and column number)
+- Active region content (if any selection exists)
+- Buffer mode/language
+
+Workflow: User presses a keybinding in Emacs that invokes pi for help. Pi can then use the emacsclient extension to interrogate the current context interactively - "what file am I in?", "what's selected?", "what's the error on this line?", etc.
+
+This enables a tight feedback loop where pi understands exactly what the user is looking at without manual copy-paste.

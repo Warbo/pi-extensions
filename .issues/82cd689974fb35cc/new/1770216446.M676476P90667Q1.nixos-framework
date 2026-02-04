@@ -1,0 +1,54 @@
+From: Chris Warburton
+Date: Wed, 04 Feb 2026 14:47:26 +0000
+State: new
+Subject: Create emacsclient extension for pi
+Message-Id: <82cd689974fb35cc-0-artemis@nixos-framework>
+
+## Context
+
+I tend to use Emacs for most things - editing files, running shells, running pi, etc. I have an emacs daemon running as a systemd user service, which I connect to with emacsclient.
+
+emacsclient itself is quite powerful, but requires a lot of ceremony. I have [emacsclient-commands](https://github.com/szermatt/emacsclient-commands) installed, which makes it easier to e.g. pipe between a shell and a buffer.
+
+## Potential Commands/Capabilities
+
+Some ideas for useful emacs-side automation that pi could perform while I'm working within emacs:
+
+### Buffer/File Operations
+- Open files at specific lines/columns
+- Get current buffer name, file path, major mode
+- List open buffers with metadata (modified, mode, file path)
+- Insert text at point or into specific buffers
+- Get/replace region content
+- Query buffer contents or search within buffers
+
+### Code/Project Context
+- Get project root/files (via projectile or project.el)
+- Query symbol definitions/references (LSP)
+- Get compilation/linting errors
+- Evaluate code in buffer's context (for supported languages)
+- Send code to active REPLs
+
+### Org-mode Integration
+- Capture tasks/notes to org files
+- Query org-agenda items
+- Access org-roam notes
+- Create/query TODO items
+
+### Navigation/State
+- Get current window/frame configuration
+- Save/restore window configurations
+- Bookmark management
+- Get/set registers
+
+### Git/Magit
+- Query git status via magit
+- Stage/unstage changes
+- Access magit state
+
+### Evaluation
+- Execute arbitrary elisp and return results
+- Query variables/settings
+- Call interactive commands
+
+The key is providing a clean interface for pi to interact with my emacs session without me having to manually copy/paste or switch contexts.
