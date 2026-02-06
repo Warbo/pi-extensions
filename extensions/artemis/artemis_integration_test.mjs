@@ -251,6 +251,11 @@ await runTest("Git artemis creates comment with body text", async (testDir) => {
 	
 	const issueId = issueIdMatch[1];
 	
+	// Wait 1 second to ensure different timestamps between issue and comment.
+	// Artemis sorts messages by date and doesn't guarantee root is first,
+	// so same-second timestamps can cause non-deterministic ordering.
+	await new Promise(resolve => setTimeout(resolve, 1000));
+	
 	// Create editor that modifies the template using SUBJECT/BODY env vars
 	const editorScript = join(testDir, "comment-editor.sh");
 	writeFileSync(editorScript, `#!/bin/sh
