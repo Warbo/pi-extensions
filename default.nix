@@ -51,6 +51,7 @@ with rec {
       {
         buildInputs = [
           artemis
+          pkgs.emacs
           pkgs.nodejs_20
           pkgs.nodePackages.typescript
           pkgs.llm-agents.pi
