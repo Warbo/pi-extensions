@@ -35,7 +35,7 @@ function buildListBuffersElisp() {
             (with-current-buffer buf
               (list
                 (cons "name" name)
-                (cons "filepath" (or (buffer-file-name) :null))
+                (cons "filepath" (buffer-file-name))
                 (cons "modified" (if (buffer-modified-p) t :json-false))
                 (cons "majorMode" (symbol-name major-mode))
                 (cons "size" (buffer-size))
@@ -57,7 +57,7 @@ function buildBufferContentsElisp(buffer, startChar, endChar) {
            (content (buffer-substring-no-properties start end)))
       (list
         (cons "buffer" (buffer-name))
-        (cons "filepath" (or (buffer-file-name) :null))
+        (cons "filepath" (buffer-file-name))
         (cons "content" content)
         (cons "length" (buffer-size))
         (cons "lineCount" (count-lines (point-min) (point-max)))
@@ -80,21 +80,36 @@ function buildEvalElisp(expression) {
       (t (format "%S" result)))))`;
 }
 
+/**
+ * Unescape an Emacs prin1-printed string (content between outer quotes).
+ *
+ * Prin1 escapes only: \ → \\  and  " → \"
+ * We reverse with a single-pass so \\n (escaped backslash + n) correctly
+ * becomes \n (the JSON escape for newline).
+ */
+function unescapeElispString(s) {
+  let result = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      result += s[i + 1];
+      i++;
+    } else {
+      result += s[i];
+    }
+  }
+  return result;
+}
+
 function parseEmacsclientOutput(raw) {
   const trimmed = raw.trim();
-  fs.writeSync(2, trimmed);
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    const inner = trimmed
-      .slice(1, -1)
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
-    // Don't replace \n since it needs to remain escaped for JSON
+    const inner = unescapeElispString(trimmed.slice(1, -1));
     return JSON.parse(inner);
   }
   if (trimmed === "nil") return null;
   if (trimmed === "t") return true;
   const num = Number(trimmed);
-  if (!isNaN(num)) return num;
+  if (!isNaN(num) && isFinite(num)) return num;
   return trimmed;
 }
 
@@ -330,8 +345,10 @@ test("parseEmacsclientOutput - trims whitespace", () => {
 
 test("parseEmacsclientOutput - nested JSON with newlines", () => {
   // Emacs buffer has "line1<newline>line2". json-encode produces {"content":"line1\nline2"}.
-  // Emacs prin1 escapes \ to \\, " to \", so stdout is: "{\"content\":\"line1\\nline2\"}"
-  const raw = '"{\\"content\\":\\"line1\\nline2\\"}"';
+  // json-encode output has \n as two chars (backslash + n).
+  // Emacs prin1 escapes the \ to \\, so stdout is: "{\"content\":\"line1\\nline2\"}"
+  // In JS source, we need \\\\ for the prin1 \\, giving us: \\\\n
+  const raw = '"{\\"content\\":\\"line1\\\\nline2\\"}"';
   const result = parseEmacsclientOutput(raw);
   assertDeepEqual(result, { content: "line1\nline2" });
 });
@@ -449,9 +466,9 @@ test("parseEmacsclientOutput - handles content with special chars", () => {
   // The expected JS value has actual newlines and a real backslash.
   const expected = { content: 'line1\n"quoted"\npath\\to' };
   const jsonStr = JSON.stringify(expected);
-  // emacsclient prin1 escapes \ to \\ and " to \"
-  const elispStr =
-    '"' + jsonStr.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  // Simulate prin1: escape \ to \\ and " to \" (order matters: \ first)
+  const prin1Inner = jsonStr.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const elispStr = '"' + prin1Inner + '"';
   const result = parseEmacsclientOutput(elispStr);
   assertDeepEqual(result, expected);
 });
@@ -468,6 +485,408 @@ test("escapeElispString - roundtrip through parse", () => {
     .replace(/\\n/g, "\n")
     .replace(/\\\\/g, "\\");
   assertEqual(recovered, original);
+});
+
+// ---------------------------------------------------------------------------
+// EXTENSIVE escaping edge case tests
+// ---------------------------------------------------------------------------
+
+test("escapeElispString - single backslash", () => {
+  assertEqual(escapeElispString("\\"), "\\\\");
+});
+
+test("escapeElispString - double backslash", () => {
+  assertEqual(escapeElispString("\\\\"), "\\\\\\\\");
+});
+
+test("escapeElispString - triple backslash", () => {
+  assertEqual(escapeElispString("\\\\\\"), "\\\\\\\\\\\\");
+});
+
+test("escapeElispString - backslash before quote", () => {
+  assertEqual(escapeElispString('\\"'), '\\\\\\"');
+});
+
+test("escapeElispString - backslash before newline", () => {
+  assertEqual(escapeElispString("\\\n"), "\\\\\\n");
+});
+
+test("escapeElispString - quote before newline", () => {
+  assertEqual(escapeElispString('"\n'), '\\"\\n');
+});
+
+test("escapeElispString - all three: backslash quote newline", () => {
+  assertEqual(escapeElispString('\\"\n'), '\\\\\\"\\n');
+});
+
+test("escapeElispString - tab character", () => {
+  // Tabs are NOT currently escaped - document this behavior
+  assertEqual(escapeElispString("a\tb"), "a\tb");
+});
+
+test("escapeElispString - carriage return", () => {
+  // CR is NOT currently escaped - document this behavior
+  assertEqual(escapeElispString("a\rb"), "a\rb");
+});
+
+test("escapeElispString - null byte", () => {
+  // Null bytes are NOT currently escaped - document this behavior
+  assertEqual(escapeElispString("a\x00b"), "a\x00b");
+});
+
+test("escapeElispString - unicode characters", () => {
+  assertEqual(escapeElispString("hello 世界"), "hello 世界");
+});
+
+test("escapeElispString - emoji", () => {
+  assertEqual(escapeElispString("test 🚀 emoji"), "test 🚀 emoji");
+});
+
+test("escapeElispString - empty vs whitespace", () => {
+  assertEqual(escapeElispString(""), "");
+  assertEqual(escapeElispString(" "), " ");
+  assertEqual(escapeElispString("  "), "  ");
+});
+
+test("escapeElispString - only special chars", () => {
+  assertEqual(escapeElispString('"""'), '\\"\\"\\"');
+  assertEqual(escapeElispString("\n\n\n"), "\\n\\n\\n");
+  assertEqual(escapeElispString("\\\\\\"), "\\\\\\\\\\\\");
+});
+
+test("escapeElispString - long string with mixed escapes", () => {
+  const input = 'line1\nline2 "quoted" \\path\\to\\file\nline3';
+  const expected = 'line1\\nline2 \\"quoted\\" \\\\path\\\\to\\\\file\\nline3';
+  assertEqual(escapeElispString(input), expected);
+});
+
+test("escapeElispString - realistic file content", () => {
+  const code = 'function test() {\n  console.log("hello\\nworld");\n}';
+  const escaped = escapeElispString(code);
+  assert(escaped.includes('\\n'), "Should escape newlines");
+  assert(escaped.includes('\\"'), "Should escape quotes");
+  assert(escaped.includes('\\\\'), "Should escape backslashes");
+});
+
+// ---------------------------------------------------------------------------
+// EXTENSIVE parseEmacsclientOutput tests
+// ---------------------------------------------------------------------------
+
+test("parseEmacsclientOutput - empty string result", () => {
+  // json-encode "" → the string "" (two quote chars)
+  // prin1: "\"\""
+  // In JS: '"\\"\\""'
+  const raw = '"\\"\\""';
+  assertEqual(parseEmacsclientOutput(raw), "");
+});
+
+test("parseEmacsclientOutput - string with escaped quote", () => {
+  // Value: "quoted" (with quotes)
+  // json-encode: "\"quoted\"" (quotes escaped in JSON)
+  // prin1: "\\\"quoted\\\"" (\ and " each escaped)
+  // Full prin1 output: "\"\\\"quoted\\\"\""
+  // In JS: '"\\"\\\\\\\"quoted\\\\\\\"\\""'
+  // Let's build it programmatically instead:
+  const value = '"quoted"';
+  const json = JSON.stringify(value);       // "\"quoted\""
+  const prin1 = json.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const raw = '"' + prin1 + '"';
+  assertEqual(parseEmacsclientOutput(raw), value);
+});
+
+test("parseEmacsclientOutput - string with escaped backslash", () => {
+  // Value: path\to\file (with backslashes)
+  // json-encode: "path\\to\\file"
+  // prin1 escapes each \: "path\\\\to\\\\file", and quotes
+  const value = "path\\to\\file";
+  const json = JSON.stringify(value);       // "path\\to\\file"
+  const prin1 = json.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const raw = '"' + prin1 + '"';
+  assertEqual(parseEmacsclientOutput(raw), value);
+});
+
+test("parseEmacsclientOutput - string with escaped newline", () => {
+  // json-encode "a<newline>b" → JSON: "a\nb" (backslash+n)
+  // prin1 escapes \ → \\: "\"a\\nb\""
+  // In JS source: \\\\ for prin1's \\, \\\" for prin1's \"
+  const raw = '"\\"a\\\\nb\\""';
+  const result = parseEmacsclientOutput(raw);
+  assertEqual(result, "a\nb");
+});
+
+test("parseEmacsclientOutput - json string containing literal backslash-n", () => {
+  // Value is: a\nb (literal backslash + n + b, 4 chars)
+  // json-encode: "a\\nb" (JSON escapes \ to \\)
+  // prin1: "\"a\\\\nb\"" (prin1 escapes each \ to \\)
+  // In JS source: each prin1 \\ needs \\\\, each prin1 \" needs \\"
+  const raw = '"\\"a\\\\\\\\nb\\""';
+  const result = parseEmacsclientOutput(raw);
+  assertEqual(result, "a\\nb");
+});
+
+test("parseEmacsclientOutput - what json-encode actually produces for newline", () => {
+  // Input to json-encode: "a<actual-newline>b"
+  // json-encode output: "a\nb" (JSON: backslash+n for newline)
+  // prin1 escapes \→\\: "\"a\\nb\""
+  // In JS source: \\\\ for \\, \\" for \"
+  const raw = '"\\"a\\\\nb\\""';
+  const parsed = parseEmacsclientOutput(raw);
+  assertEqual(parsed, "a\nb");
+});
+
+test("parseEmacsclientOutput - json object with newline in value", () => {
+  // JSON: {"content":"line1\nline2"}
+  // prin1: "{\"content\":\"line1\\nline2\"}" (\ before n gets escaped to \\)
+  // In JS source: \\\\ for prin1's \\
+  const raw = '"{\\"content\\":\\"line1\\\\nline2\\"}"';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, { content: "line1\nline2" });
+});
+
+test("parseEmacsclientOutput - json object with backslash in value", () => {
+  // Value: c:\dir (one backslash)
+  // JSON: {"path":"c:\\dir"} (\ escaped to \\)
+  // prin1: "{\"path\":\"c:\\\\dir\"}" (each \ escaped to \\, so \\ becomes \\\\)
+  // In JS source: each prin1 \\ needs \\\\
+  const raw = '"{\\"path\\":\\"c:\\\\\\\\dir\\"}"';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, { path: "c:\\dir" });
+});
+
+test("parseEmacsclientOutput - json object with quote in value", () => {
+  // Value: say "hi"
+  // JSON: {"msg":"say \"hi\""} (quotes escaped to \")
+  // prin1: "{\"msg\":\"say \\\"hi\\\"\"}" (\ escaped to \\, " escaped to \")
+  // In JS source: prin1's \\ needs \\\\, prin1's \" needs \\"
+  const raw = '"{\\"msg\\":\\"say \\\\\\"hi\\\\\\"\\"}"\n';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, { msg: 'say "hi"' });
+});
+
+test("parseEmacsclientOutput - zero", () => {
+  assertEqual(parseEmacsclientOutput("0"), 0);
+});
+
+test("parseEmacsclientOutput - negative number", () => {
+  assertEqual(parseEmacsclientOutput("-42"), -42);
+});
+
+test("parseEmacsclientOutput - float", () => {
+  assertEqual(parseEmacsclientOutput("3.14"), 3.14);
+});
+
+test("parseEmacsclientOutput - negative float", () => {
+  assertEqual(parseEmacsclientOutput("-2.5"), -2.5);
+});
+
+test("parseEmacsclientOutput - very long number", () => {
+  assertEqual(parseEmacsclientOutput("123456789"), 123456789);
+});
+
+test("parseEmacsclientOutput - leading/trailing spaces on string", () => {
+  // Value: "  spaces  " (string with spaces)
+  // json-encode: "\"  spaces  \"" → prin1: "\"\\\"  spaces  \\\"\""
+  const value = "  spaces  ";
+  const json = JSON.stringify(value);
+  const prin1 = json.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const raw = '"' + prin1 + '"';
+  assertEqual(parseEmacsclientOutput(raw), value);
+});
+
+test("parseEmacsclientOutput - nested json arrays", () => {
+  const raw = '"[[1,2],[3,4]]"';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, [[1, 2], [3, 4]]);
+});
+
+test("parseEmacsclientOutput - deeply nested json", () => {
+  const raw = '"{\\"a\\":{\\"b\\":{\\"c\\":123}}}"';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, { a: { b: { c: 123 } } });
+});
+
+test("parseEmacsclientOutput - json with all types", () => {
+  const raw = '"{\\"str\\":\\"hi\\",\\"num\\":42,\\"bool\\":true,\\"nil\\":null,\\"arr\\":[1,2]}"';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, {
+    str: "hi",
+    num: 42,
+    bool: true,
+    nil: null,
+    arr: [1, 2]
+  });
+});
+
+test("parseEmacsclientOutput - json array with mixed types", () => {
+  const raw = '"[1,\\"two\\",true,null]"';
+  const result = parseEmacsclientOutput(raw);
+  assertDeepEqual(result, [1, "two", true, null]);
+});
+
+test("parseEmacsclientOutput - NaN string (not a number parse)", () => {
+  const raw = "NaN";
+  const result = parseEmacsclientOutput(raw);
+  assertEqual(result, "NaN"); // Should return as string, not number
+});
+
+test("parseEmacsclientOutput - Infinity string", () => {
+  const raw = "Infinity";
+  const result = parseEmacsclientOutput(raw);
+  assertEqual(result, "Infinity"); // Should return as string, not number
+});
+
+// ---------------------------------------------------------------------------
+// Tests documenting EXPECTED json-encode behavior from Emacs
+// ---------------------------------------------------------------------------
+
+test("EXPECTED - json-encode string with newline becomes escaped in JSON", () => {
+  // json-encode "a<newline>b" → JSON: "a\nb" (two chars: backslash + n)
+  // prin1 escapes \ → \\: "\"a\\nb\""
+  // In JS source: \\\\ for prin1's \\
+  const emacsclientOutput = '"\\"a\\\\nb\\""';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  assertEqual(parsed, "a\nb");
+});
+
+test("EXPECTED - json-encode object with newline in field", () => {
+  // json-encode produces: {"content":"line1\nline2"}
+  // prin1 escapes \ → \\: "{\"content\":\"line1\\nline2\"}"
+  // In JS source: \\\\ for prin1's \\
+  const emacsclientOutput = '"{\\"content\\":\\"line1\\\\nline2\\"}"';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertDeepEqual(parsed, { content: "line1\nline2" });
+});
+
+test("EXPECTED - json-encode preserves backslashes correctly", () => {
+  // Value: c:\dir (one backslash)
+  // JSON: "c:\\dir" (\ escaped to \\)
+  // prin1: "\"c:\\\\dir\"" (\\ each escaped to \\\\)
+  // In JS source: \\\\\\\\ for prin1's \\\\
+  const emacsclientOutput = '"\\"c:\\\\\\\\dir\\""';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertEqual(parsed, "c:\\dir");
+});
+
+test("EXPECTED - json-encode with nil becomes JSON null", () => {
+  // In Emacs 30, nil maps to JSON null (not :null which becomes the string "null")
+  // (json-encode '(("val" . nil))) → {"val":null}
+  // prin1: "{\"val\":null}"
+  const emacsclientOutput = '"{\\"val\\":null}"';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertDeepEqual(parsed, { val: null });
+});
+
+test("EXPECTED - json-encode with :json-false becomes JSON false", () => {
+  // When we call (json-encode '(("val" . :json-false))) in Emacs:
+  // json-encode produces: {"val":false}
+  
+  const emacsclientOutput = '"{\\"val\\":false}"';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertDeepEqual(parsed, { val: false });
+});
+
+test("EXPECTED - json-encode with t becomes JSON true", () => {
+  // When we call (json-encode '(("val" . t))) in Emacs:
+  // json-encode produces: {"val":true}
+  
+  const emacsclientOutput = '"{\\"val\\":true}"';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertDeepEqual(parsed, { val: true });
+});
+
+test("EXPECTED - json-encode with number", () => {
+  const emacsclientOutput = '"{\\"count\\":42}"';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertDeepEqual(parsed, { count: 42 });
+});
+
+test("EXPECTED - json-encode returns string that we parse as JSON", () => {
+  // The pattern: json-encode returns a JSON string, Emacs prints it as elisp string
+  // We parse the elisp string to get JSON, then JSON.parse to get the value
+  
+  const emacsclientOutput = '"[1,2,3]"';
+  const parsed = parseEmacsclientOutput(emacsclientOutput);
+  
+  assertDeepEqual(parsed, [1, 2, 3]);
+});
+
+// ---------------------------------------------------------------------------
+// Tests for realistic buffer content scenarios
+// ---------------------------------------------------------------------------
+
+test("realistic - python code with strings", () => {
+  const pythonCode = 'def hello():\n    print("Hello, world!")\n    return True';
+  
+  // Simulate what json-encode would produce for buffer content
+  const jsonObj = { content: pythonCode };
+  const jsonStr = JSON.stringify(jsonObj);
+  // Elisp print escapes
+  const elispStr = '"' + jsonStr.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  
+  const parsed = parseEmacsclientOutput(elispStr);
+  assertDeepEqual(parsed, jsonObj);
+  assertEqual(parsed.content, pythonCode);
+});
+
+test("realistic - javascript with regex and escapes", () => {
+  const jsCode = 'const re = /\\d+/;\nconst str = "test\\nline";';
+  
+  const jsonObj = { content: jsCode };
+  const jsonStr = JSON.stringify(jsonObj);
+  const elispStr = '"' + jsonStr.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  
+  const parsed = parseEmacsclientOutput(elispStr);
+  assertEqual(parsed.content, jsCode);
+});
+
+test("realistic - windows path in buffer", () => {
+  const path = 'C:\\Users\\Name\\Documents\\file.txt';
+  
+  const jsonObj = { filepath: path };
+  const jsonStr = JSON.stringify(jsonObj);
+  const elispStr = '"' + jsonStr.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  
+  const parsed = parseEmacsclientOutput(elispStr);
+  assertEqual(parsed.filepath, path);
+});
+
+test("realistic - shell script with quotes and newlines", () => {
+  const script = '#!/bin/bash\necho "Starting..."\nif [ -f "test.txt" ]; then\n  cat "test.txt"\nfi';
+  
+  const jsonObj = { content: script };
+  const jsonStr = JSON.stringify(jsonObj);
+  const elispStr = '"' + jsonStr.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  
+  const parsed = parseEmacsclientOutput(elispStr);
+  assertEqual(parsed.content, script);
+});
+
+test("realistic - json file content in buffer", () => {
+  const jsonContent = '{\n  "name": "test",\n  "value": 42\n}';
+  
+  const jsonObj = { content: jsonContent };
+  const jsonStr = JSON.stringify(jsonObj);
+  const elispStr = '"' + jsonStr.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  
+  const parsed = parseEmacsclientOutput(elispStr);
+  assertEqual(parsed.content, jsonContent);
+});
+
+test("realistic - markdown with various characters", () => {
+  const markdown = '# Title\n\nSome text with "quotes" and `code`.\n\n- List item\n- Another item';
+  
+  const jsonObj = { content: markdown };
+  const jsonStr = JSON.stringify(jsonObj);
+  const elispStr = '"' + jsonStr.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  
+  const parsed = parseEmacsclientOutput(elispStr);
+  assertEqual(parsed.content, markdown);
 });
 
 // ---------------------------------------------------------------------------

@@ -38,7 +38,7 @@ export function buildListBuffersElisp(): string {
             (with-current-buffer buf
               (list
                 (cons "name" name)
-                (cons "filepath" (or (buffer-file-name) :null))
+                (cons "filepath" (buffer-file-name))
                 (cons "modified" (if (buffer-modified-p) t :json-false))
                 (cons "majorMode" (symbol-name major-mode))
                 (cons "size" (buffer-size))
@@ -74,7 +74,7 @@ export function buildBufferContentsElisp(
            (content (buffer-substring-no-properties start end)))
       (list
         (cons "buffer" (buffer-name))
-        (cons "filepath" (or (buffer-file-name) :null))
+        (cons "filepath" (buffer-file-name))
         (cons "content" content)
         (cons "length" (buffer-size))
         (cons "lineCount" (count-lines (point-min) (point-max)))
@@ -156,26 +156,50 @@ export function buildEvalElisp(expression: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Unescape an Emacs prin1-printed string (the content between outer quotes).
+ *
+ * Emacs prin1 escapes only two things inside strings:
+ *   \  →  \\
+ *   "  →  \"
+ *
+ * We reverse this with a single character-by-character pass so that
+ * sequences like \\n (prin1-escaped backslash before 'n') correctly
+ * become \n (the JSON escape for newline) rather than a literal newline.
+ */
+function unescapeElispString(s: string): string {
+  let result = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      result += s[i + 1];
+      i++;
+    } else {
+      result += s[i];
+    }
+  }
+  return result;
+}
+
+/**
  * Parse the output of `emacsclient --eval`, which prints an Emacs Lisp value.
  *
  * For our purposes, the result is always a JSON string (from json-encode),
  * which emacsclient prints as an elisp string literal: "\"...\"".
- * We need to strip the outer quotes and unescape the inner content,
- * then parse the JSON.
+ * We need to strip the outer quotes and unescape the prin1 escaping,
+ * then parse the resulting JSON.
+ *
+ * Escaping layers:
+ *   1. json-encode produces a JSON string with standard JSON escapes
+ *      (\n for newline, \\ for backslash, \" for quote, etc.)
+ *   2. Emacs prin1 wraps in double quotes and escapes \ → \\ and " → \"
+ *   3. We undo layer 2, then JSON.parse handles layer 1
  */
 export function parseEmacsclientOutput(raw: string): unknown {
-    const trimmed = raw.trim();
-    console.error(trimmed);
-  process.stderr.write(trimmed);
+  const trimmed = raw.trim();
 
   // emacsclient wraps string results in double quotes
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    // Remove outer quotes and unescape elisp string escapes
-    const inner = trimmed
-      .slice(1, -1)
-      .replace(/\\"/g, '"')
-      .replace(/\\n/g, "\n")
-      .replace(/\\\\/g, "\\");
+    // Remove outer quotes and undo prin1 string escaping
+    const inner = unescapeElispString(trimmed.slice(1, -1));
     return JSON.parse(inner);
   }
 
@@ -184,7 +208,7 @@ export function parseEmacsclientOutput(raw: string): unknown {
   if (trimmed === "nil") return null;
   if (trimmed === "t") return true;
   const num = Number(trimmed);
-  if (!isNaN(num)) return num;
+  if (!isNaN(num) && isFinite(num)) return num;
 
   // Last resort: return raw string
   return trimmed;

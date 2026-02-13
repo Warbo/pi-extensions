@@ -35,7 +35,7 @@ function buildListBuffersElisp() {
             (with-current-buffer buf
               (list
                 (cons "name" name)
-                (cons "filepath" (or (buffer-file-name) :null))
+                (cons "filepath" (buffer-file-name))
                 (cons "modified" (if (buffer-modified-p) t :json-false))
                 (cons "majorMode" (symbol-name major-mode))
                 (cons "size" (buffer-size))
@@ -57,7 +57,7 @@ function buildBufferContentsElisp(buffer, startChar, endChar) {
            (content (buffer-substring-no-properties start end)))
       (list
         (cons "buffer" (buffer-name))
-        (cons "filepath" (or (buffer-file-name) :null))
+        (cons "filepath" (buffer-file-name))
         (cons "content" content)
         (cons "length" (buffer-size))
         (cons "lineCount" (count-lines (point-min) (point-max)))
@@ -80,20 +80,34 @@ function buildEvalElisp(expression) {
       (t (format "%S" result)))))`;
 }
 
+/**
+ * Unescape an Emacs prin1-printed string (content between outer quotes).
+ * Prin1 escapes only: \ → \\  and  " → \"
+ * Single-pass so \\n correctly becomes \n (JSON escape for newline).
+ */
+function unescapeElispString(s) {
+  let result = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      result += s[i + 1];
+      i++;
+    } else {
+      result += s[i];
+    }
+  }
+  return result;
+}
+
 function parseEmacsclientOutput(raw) {
   const trimmed = raw.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    const inner = trimmed
-      .slice(1, -1)
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\")
-      .replace(/\\n/g, "\n");
+    const inner = unescapeElispString(trimmed.slice(1, -1));
     return JSON.parse(inner);
   }
   if (trimmed === "nil") return null;
   if (trimmed === "t") return true;
   const num = Number(trimmed);
-  if (!isNaN(num)) return num;
+  if (!isNaN(num) && isFinite(num)) return num;
   return trimmed;
 }
 
@@ -144,6 +158,7 @@ async function test(name, fn) {
 
 const tempDir = mkdirSync(join(tmpdir(), `emacs-test-${Date.now()}`), {
   recursive: true,
+  mode: 0o700,
 });
 const socketName = join(tempDir, "emacs-test-socket");
 
@@ -165,14 +180,33 @@ function emacsclientParsed(elisp) {
 
 function startEmacs() {
   // Start Emacs daemon with minimal config
+  // Use --daemon instead of --fg-daemon for better sandbox compatibility
   execFileSync("emacs", [
-    "--fg-daemon=" + socketName,
-    "--quick",       // No init file
+    "--daemon=" + socketName,
+    "--no-window-system", // Ensure headless mode
+    "--eval", "(require 'json)", // Load json library for json-encode
   ], {
-    timeout: 15000,
-    env: { ...process.env, HOME: tempDir },
+    timeout: 30000,
+    env: {
+      ...process.env,
+      HOME: tempDir,
+      DISPLAY: "", // Prevent X11 issues
+    },
     stdio: "pipe",
   });
+
+  // Wait for socket to be ready
+  let retries = 50;
+  while (retries-- > 0 && !existsSync(socketName)) {
+    const start = Date.now();
+    while (Date.now() - start < 100) {
+      // Busy wait for 100ms
+    }
+  }
+
+  if (!existsSync(socketName)) {
+    throw new Error("Emacs socket did not appear");
+  }
 }
 
 function stopEmacs() {
@@ -215,7 +249,465 @@ function stopEmacs() {
     process.exit(1);
   }
 
-  // -- Tests --
+  // -- FOUNDATIONAL json-encode TESTS --
+  // These tests verify our understanding of how json-encode actually works
+
+  await test("json-encode - simple string", () => {
+    const raw = emacsclient('(json-encode "hello")');
+    console.log(`# json-encode "hello" -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"\\"hello\\""');
+  });
+
+  await test("json-encode - empty string", () => {
+    const raw = emacsclient('(json-encode "")');
+    console.log(`# json-encode "" -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"\\"\\""');
+  });
+
+  await test("json-encode - string with newline", () => {
+    const raw = emacsclient('(json-encode "a\nb")');
+    console.log(`# json-encode "a\\nb" -> ${JSON.stringify(raw)}`);
+    // Should be: "\"a\\nb\"" (elisp string containing JSON "a\nb")
+    assert(raw.includes('\\n'), "Should contain escaped newline");
+  });
+
+  await test("json-encode - string with quote", () => {
+    const raw = emacsclient('(json-encode "say \\"hi\\"")');
+    console.log(`# json-encode with quote -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('\\\\"'), "Should contain escaped quote");
+  });
+
+  await test("json-encode - string with backslash", () => {
+    const raw = emacsclient('(json-encode "path\\\\to")');
+    console.log(`# json-encode with backslash -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('\\\\\\\\'), "Should contain double-escaped backslash");
+  });
+
+  await test("json-encode - number", () => {
+    const raw = emacsclient('(json-encode 42)');
+    console.log(`# json-encode 42 -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"42"');
+  });
+
+  await test("json-encode - negative number", () => {
+    const raw = emacsclient('(json-encode -17)');
+    console.log(`# json-encode -17 -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"-17"');
+  });
+
+  await test("json-encode - float", () => {
+    const raw = emacsclient('(json-encode 3.14)');
+    console.log(`# json-encode 3.14 -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('3.14'), "Should contain float value");
+  });
+
+  await test("json-encode - true (t)", () => {
+    const raw = emacsclient('(json-encode t)');
+    console.log(`# json-encode t -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"true"');
+  });
+
+  await test("json-encode - false (:json-false)", () => {
+    const raw = emacsclient('(json-encode :json-false)');
+    console.log(`# json-encode :json-false -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"false"');
+  });
+
+  await test("json-encode - null (nil)", () => {
+    // In Emacs 30, nil maps to JSON null (not :null which becomes the string "null")
+    const raw = emacsclient('(json-encode nil)');
+    console.log(`# json-encode nil -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"null"');
+  });
+
+  await test("json-encode - empty array (vector)", () => {
+    // '() is nil in Emacs (maps to null). Use [] (vector) for empty arrays.
+    const raw = emacsclient("(json-encode [])");
+    console.log(`# json-encode [] -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"[]"');
+  });
+
+  await test("json-encode - simple array", () => {
+    const raw = emacsclient("(json-encode '(1 2 3))");
+    console.log(`# json-encode '(1 2 3) -> ${JSON.stringify(raw)}`);
+    assertEqual(raw.trim(), '"[1,2,3]"');
+  });
+
+  await test("json-encode - array with strings", () => {
+    const raw = emacsclient('(json-encode \'("a" "b"))');
+    console.log(`# json-encode '("a" "b") -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('\\"a\\"'), "Should contain escaped string");
+  });
+
+  await test("json-encode - empty object (alist)", () => {
+    const raw = emacsclient("(json-encode '())");
+    console.log(`# json-encode empty alist -> ${JSON.stringify(raw)}`);
+    // Could be [] or {}, depending on context
+  });
+
+  await test("json-encode - object with string value", () => {
+    const raw = emacsclient('(json-encode \'(("key" . "value")))');
+    console.log(`# json-encode alist -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('key'), "Should contain key");
+    assert(raw.includes('value'), "Should contain value");
+  });
+
+  await test("json-encode - object with number value", () => {
+    const raw = emacsclient('(json-encode \'(("count" . 42)))');
+    console.log(`# json-encode with number -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('count'), "Should contain key");
+    assert(raw.includes('42'), "Should contain number");
+  });
+
+  await test("json-encode - object with null value", () => {
+    // nil in alist value position encodes to JSON null
+    // (cons "val" nil) = ("val"), cdr is nil → null
+    const raw = emacsclient('(json-encode \'(("val")))');
+    console.log(`# json-encode with nil value -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('null'), "Should contain null");
+  });
+
+  await test("json-encode - object with boolean values", () => {
+    const raw = emacsclient('(json-encode \'(("yes" . t) ("no" . :json-false)))');
+    console.log(`# json-encode with booleans -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('true'), "Should contain true");
+    assert(raw.includes('false'), "Should contain false");
+  });
+
+  await test("json-encode - nested object", () => {
+    const raw = emacsclient('(json-encode \'(("outer" . (("inner" . 123)))))');
+    console.log(`# json-encode nested -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('outer'), "Should contain outer key");
+    assert(raw.includes('inner'), "Should contain inner key");
+  });
+
+  await test("json-encode - object with newline in string value", () => {
+    const raw = emacsclient('(json-encode \'(("content" . "line1\nline2")))');
+    console.log(`# json-encode with newline in value -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('\\n'), "Should escape newline in JSON");
+    // Verify it's double-escaped for elisp print
+    assert(raw.includes('\\\\n'), "Should be double-escaped");
+  });
+
+  await test("json-encode - object with quote in string value", () => {
+    const raw = emacsclient('(json-encode \'(("msg" . "say \\"hi\\"")))');
+    console.log(`# json-encode with quote in value -> ${JSON.stringify(raw)}`);
+    assert(raw.includes('\\\\"'), "Should escape quotes");
+  });
+
+  await test("json-encode - object with backslash in string value", () => {
+    const raw = emacsclient('(json-encode \'(("path" . "c:\\\\dir")))');
+    console.log(`# json-encode with backslash in value -> ${JSON.stringify(raw)}`);
+    // Should have double-double backslashes
+    assert(raw.includes('\\\\\\\\'), "Should double-escape backslashes");
+  });
+
+  await test("json-encode - complex realistic buffer content", () => {
+    // Simulate realistic buffer content with mixed special characters
+    const raw = emacsclient('(json-encode \'(("content" . "def test():\n    print(\\"hello\\")\n    return True")))');
+    console.log(`# json-encode realistic code -> ${JSON.stringify(raw.substring(0, 100))}`);
+    assert(raw.includes('\\n'), "Should have newlines");
+    assert(raw.includes('\\\\"'), "Should have escaped quotes");
+  });
+
+  await test("json-encode - parse roundtrip simple string", () => {
+    const raw = emacsclient('(json-encode "test")');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, "test");
+  });
+
+  await test("json-encode - parse roundtrip string with newline", () => {
+    const raw = emacsclient('(json-encode "a\nb")');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, "a\nb", "Should parse to string with actual newline");
+  });
+
+  await test("json-encode - parse roundtrip string with quote", () => {
+    const raw = emacsclient('(json-encode "say \\"hi\\"")');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, 'say "hi"');
+  });
+
+  await test("json-encode - parse roundtrip string with backslash", () => {
+    const raw = emacsclient('(json-encode "path\\\\to")');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, 'path\\to');
+  });
+
+  await test("json-encode - parse roundtrip number", () => {
+    const raw = emacsclient('(json-encode 42)');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, 42);
+  });
+
+  await test("json-encode - parse roundtrip boolean true", () => {
+    const raw = emacsclient('(json-encode t)');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, true);
+  });
+
+  await test("json-encode - parse roundtrip boolean false", () => {
+    const raw = emacsclient('(json-encode :json-false)');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, false);
+  });
+
+  await test("json-encode - parse roundtrip null", () => {
+    const raw = emacsclient('(json-encode nil)');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed, null);
+  });
+
+  await test("json-encode - parse roundtrip array", () => {
+    const raw = emacsclient("(json-encode '(1 2 3))");
+    const parsed = parseEmacsclientOutput(raw);
+    assertDeepEqual(parsed, [1, 2, 3]);
+  });
+
+  await test("json-encode - parse roundtrip object", () => {
+    const raw = emacsclient('(json-encode \'(("name" . "test") ("count" . 42)))');
+    const parsed = parseEmacsclientOutput(raw);
+    assertDeepEqual(parsed, { name: "test", count: 42 });
+  });
+
+  await test("json-encode - parse roundtrip object with newline", () => {
+    const raw = emacsclient('(json-encode \'(("content" . "a\nb")))');
+    const parsed = parseEmacsclientOutput(raw);
+    assertDeepEqual(parsed, { content: "a\nb" });
+    assert(parsed.content.includes('\n'), "Content should have actual newline character");
+  });
+
+  await test("json-encode - parse roundtrip object with all special chars", () => {
+    const raw = emacsclient('(json-encode \'(("text" . "line1\n\\"quoted\\"\\npath\\\\to")))');
+    const parsed = parseEmacsclientOutput(raw);
+    assertEqual(parsed.text, 'line1\n"quoted"\npath\\to');
+  });
+
+  // -- DETAILED escaping level tests --
+  
+  await test("escaping levels - single backslash in elisp", () => {
+    // Elisp: "\\" (two backslashes in source) = one backslash in string
+    const raw = emacsclient('(json-encode "\\\\")');
+    console.log(`# json-encode "\\\\" -> ${JSON.stringify(raw)}`);
+    console.log(`# Expecting: one backslash character encoded as JSON`);
+  });
+
+  await test("escaping levels - double backslash in elisp", () => {
+    // Elisp: "\\\\" (four backslashes in source) = two backslashes in string  
+    const raw = emacsclient('(json-encode "\\\\\\\\")');
+    console.log(`# json-encode "\\\\\\\\" -> ${JSON.stringify(raw)}`);
+    console.log(`# Expecting: two backslash characters encoded as JSON`);
+  });
+
+  await test("escaping levels - backslash-n vs newline", () => {
+    // Elisp source with actual newline in string literal
+    const raw1 = emacsclient('(json-encode "a\nb")');
+    console.log(`# json-encode "a<newline>b" -> ${JSON.stringify(raw1)}`);
+    
+    // Elisp source with backslash-n (should be: "\\n" in elisp source)
+    const raw2 = emacsclient('(json-encode "a\\\\nb")');
+    console.log(`# json-encode "a\\\\nb" -> ${JSON.stringify(raw2)}`);
+    console.log(`# First should have JSON \\n, second should have JSON \\\\n`);
+  });
+
+  await test("escaping levels - what our parser gets for newline", () => {
+    const raw = emacsclient('(json-encode "a\nb")');
+    console.log(`# Raw string length: ${raw.length}`);
+    console.log(`# Raw chars: ${Array.from(raw).map((c, i) => `[${i}]:${c.charCodeAt(0)}`).join(' ')}`);
+  });
+
+  await test("escaping levels - what our parser gets for backslash-n", () => {
+    const raw = emacsclient('(json-encode "a\\\\nb")');
+    console.log(`# Raw string length: ${raw.length}`);
+    console.log(`# Raw chars: ${Array.from(raw).map((c, i) => `[${i}]:${c.charCodeAt(0)}`).join(' ')}`);
+  });
+
+  await test("escaping levels - manual parse newline case", () => {
+    const raw = emacsclient('(json-encode "a\nb")');
+    console.log(`# Input: ${JSON.stringify(raw)}`);
+    const trimmed = raw.trim();
+    console.log(`# After trim: ${JSON.stringify(trimmed)}`);
+    const sliced = trimmed.slice(1, -1);
+    console.log(`# After slice(1,-1): ${JSON.stringify(sliced)}`);
+    const afterQuote = sliced.replace(/\\"/g, '"');
+    console.log(`# After replacing \\\\": ${JSON.stringify(afterQuote)}`);
+    const afterBackslash = afterQuote.replace(/\\\\/g, "\\");
+    console.log(`# After replacing \\\\\\\\: ${JSON.stringify(afterBackslash)}`);
+    console.log(`# About to JSON.parse: ${JSON.stringify(afterBackslash)}`);
+    try {
+      const result = JSON.parse(afterBackslash);
+      console.log(`# JSON.parse result: ${JSON.stringify(result)}`);
+    } catch (e) {
+      console.log(`# JSON.parse error: ${e.message}`);
+    }
+  });
+
+  await test("escaping levels - manual parse backslash-n case", () => {
+    const raw = emacsclient('(json-encode "a\\\\nb")');
+    console.log(`# Input: ${JSON.stringify(raw)}`);
+    const trimmed = raw.trim();
+    console.log(`# After trim: ${JSON.stringify(trimmed)}`);
+    const sliced = trimmed.slice(1, -1);
+    console.log(`# After slice(1,-1): ${JSON.stringify(sliced)}`);
+    const afterQuote = sliced.replace(/\\"/g, '"');
+    console.log(`# After replacing \\\\": ${JSON.stringify(afterQuote)}`);
+    const afterBackslash = afterQuote.replace(/\\\\/g, "\\");
+    console.log(`# After replacing \\\\\\\\: ${JSON.stringify(afterBackslash)}`);
+    console.log(`# About to JSON.parse: ${JSON.stringify(afterBackslash)}`);
+    try {
+      const result = JSON.parse(afterBackslash);
+      console.log(`# JSON.parse result: ${JSON.stringify(result)}`);
+    } catch (e) {
+      console.log(`# JSON.parse error: ${e.message}`);
+    }
+  });
+
+  await test("null representation - :null vs :json-false vs nil vs 'null", () => {
+    const r1 = emacsclient('(json-encode :null)');
+    console.log(`# :null -> ${JSON.stringify(r1)}`);
+    
+    const r2 = emacsclient('(json-encode :json-false)');
+    console.log(`# :json-false -> ${JSON.stringify(r2)}`);
+    
+    const r3 = emacsclient('(json-encode nil)');
+    console.log(`# nil -> ${JSON.stringify(r3)}`);
+    
+    const r4 = emacsclient("(json-encode 'null)");
+    console.log(`# 'null -> ${JSON.stringify(r4)}`);
+  });
+
+  await test("array representation - empty list vs vector", () => {
+    const r1 = emacsclient("(json-encode '())");
+    console.log(`# '() -> ${JSON.stringify(r1)}`);
+    
+    const r2 = emacsclient("(json-encode [])");
+    console.log(`# [] -> ${JSON.stringify(r2)}`);
+    
+    const r3 = emacsclient("(json-encode '(1 2 3))");
+    console.log(`# '(1 2 3) -> ${JSON.stringify(r3)}`);
+    
+    const r4 = emacsclient("(json-encode [1 2 3])");
+    console.log(`# [1 2 3] -> ${JSON.stringify(r4)}`);
+  });
+
+  await test("object representation - alist with :json-null", () => {
+    const raw = emacsclient('(json-encode \'(("val" . :json-null)))');
+    console.log(`# alist with :json-null -> ${JSON.stringify(raw)}`);
+  });
+
+  await test("comprehensive escape sequence test", () => {
+    // Test string with: newline, quote, backslash, tab
+    const raw = emacsclient('(json-encode "a\n\\"b\\"\\nc\\\\d\\te")');
+    console.log(`# Complex escapes -> ${JSON.stringify(raw)}`);
+    console.log(`# Should contain: newline, quote, backslash, tab`);
+  });
+
+  await test("realistic buffer content - Python with docstring", () => {
+    const code = 'def foo():\n    """Docstring with "quotes" """\n    return True';
+    // We need to properly escape this for elisp
+    const escaped = code
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# Python code -> ${JSON.stringify(raw.substring(0, 100))}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      console.log(`# Parsed length: ${parsed.length}, original length: ${code.length}`);
+      assertEqual(parsed, code);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  await test("realistic buffer content - Windows path", () => {
+    const path = 'C:\\Users\\Name\\Documents\\file.txt';
+    const escaped = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# Windows path -> ${JSON.stringify(raw)}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      assertEqual(parsed, path);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  await test("realistic buffer content - JSON file", () => {
+    const jsonContent = '{\n  "key": "value",\n  "num": 42\n}';
+    const escaped = jsonContent
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# JSON content -> ${JSON.stringify(raw.substring(0, 80))}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      assertEqual(parsed, jsonContent);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  await test("realistic buffer content - Shell script", () => {
+    const script = '#!/bin/bash\necho "test"\nif [ -f "file.txt" ]; then\n  cat "file.txt"\nfi';
+    const escaped = script
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# Shell script -> ${JSON.stringify(raw.substring(0, 80))}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      assertEqual(parsed, script);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  await test("edge case - consecutive backslashes", () => {
+    const input = '\\\\\\\\'; // Four backslashes
+    const escaped = input.replace(/\\/g, '\\\\');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# Four backslashes -> ${JSON.stringify(raw)}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      assertEqual(parsed, input);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  await test("edge case - backslash before quote", () => {
+    const input = 'test\\"quoted'; // Backslash before quote
+    const escaped = input.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# Backslash-quote -> ${JSON.stringify(raw)}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      assertEqual(parsed, input);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  await test("edge case - mixed escape sequences", () => {
+    const input = 'a\\nb\nc\\\\d\\"e"f';
+    const escaped = input
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n');
+    const raw = emacsclient(`(json-encode "${escaped}")`);
+    console.log(`# Mixed escapes -> ${JSON.stringify(raw.substring(0, 80))}`);
+    try {
+      const parsed = parseEmacsclientOutput(raw);
+      assertEqual(parsed, input);
+    } catch (e) {
+      console.log(`# Parse error: ${e.message}`);
+    }
+  });
+
+  // -- Original Tests --
 
   await test("emacs_eval - simple arithmetic", () => {
     const elisp = buildEvalElisp("(+ 21 21)");
