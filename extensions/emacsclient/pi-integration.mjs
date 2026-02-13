@@ -58,20 +58,24 @@ function waitForResponse(events, timeout = 15000) {
 function createFakeEmacsclient(dir, responses) {
   // responses is a map from elisp substring → raw stdout output
   const script = join(dir, "emacsclient");
+  const jsScript = join(dir, "emacsclient.js");
   const responsesJson = JSON.stringify(responses);
 
-  // The fake script looks at the --eval argument and returns a matching response
+  // Create the JavaScript implementation
   writeFileSync(
-    script,
-    `#!/usr/bin/env node
-const responses = ${responsesJson};
+    jsScript,
+    `const responses = ${responsesJson};
 const args = process.argv.slice(2);
 const evalIdx = args.indexOf("--eval");
 if (evalIdx === -1) {
-  process.stderr.write("emacsclient: no --eval argument\\n");
+  process.stderr.write("FAKE emacsclient: no --eval argument\\n");
   process.exit(1);
 }
 const elisp = args[evalIdx + 1];
+if (!elisp) {
+  process.stderr.write("FAKE emacsclient: missing elisp expression after --eval\\n");
+  process.exit(1);
+}
 for (const [key, value] of Object.entries(responses)) {
   if (elisp.includes(key)) {
     process.stdout.write(value);
@@ -80,6 +84,16 @@ for (const [key, value] of Object.entries(responses)) {
 }
 // Default: return empty JSON array
 process.stdout.write('"[]"');
+process.exit(0);
+`,
+    "utf-8"
+  );
+
+  // Create a shell wrapper that calls node
+  writeFileSync(
+    script,
+    `#!/bin/sh
+exec node "${jsScript}" "$@"
 `,
     "utf-8"
   );
@@ -294,7 +308,7 @@ async function runTest(name, testFn) {
 
       const ext = join(__dirname, "index.ts");
       const pi = startPi([llm, ext], tempDir, {
-        PATH: `${fakeDir}:${process.env.PATH}`,
+        EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
       });
 
       const events = [];
@@ -356,7 +370,7 @@ async function runTest(name, testFn) {
 
       const ext = join(__dirname, "index.ts");
       const pi = startPi([llm, ext], tempDir, {
-        PATH: `${fakeDir}:${process.env.PATH}`,
+        EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
       });
 
       const events = [];
@@ -414,7 +428,7 @@ async function runTest(name, testFn) {
 
     const ext = join(__dirname, "index.ts");
     const pi = startPi([llm, ext], tempDir, {
-      PATH: `${fakeDir}:${process.env.PATH}`,
+      EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
     });
 
     const events = [];
@@ -474,7 +488,7 @@ process.exit(1);
 
       const ext = join(__dirname, "index.ts");
       const pi = startPi([llm, ext], tempDir, {
-        PATH: `${tempDir}:${process.env.PATH}`,
+        EMACSCLIENT_BINARY: script,
       });
 
       const events = [];
@@ -511,14 +525,41 @@ process.exit(1);
     }
   );
 
-  // Test: all four tools are registered
+  // Test: all four tools are registered and can be called
   await runTest("all four emacs tools are registered", async (tempDir) => {
-    const fakeDir = createFakeEmacsclient(tempDir, {});
+    const fakeDir = createFakeEmacsclient(tempDir, {
+      "buffer-list": '"[]"',
+      "with-current-buffer": '"{\\"buffer\\":\\"test\\",\\"filepath\\":null,\\"content\\":\\"\\",\\"length\\":0,\\"lineCount\\":0,\\"majorMode\\":\\"fundamental-mode\\",\\"modified\\":false,\\"point\\":1,\\"pointLine\\":1,\\"pointColumn\\":0}"',
+      "progn": '"42"',
+      "treesit-query-capture": '"[]"',
+    });
 
-    const llm = createDummyLLM(tempDir, {});
+    const llm = createDummyLLM(tempDir, {
+      "test tool 1": {
+        text: "Testing list buffers.",
+        tool: "emacs_list_buffers",
+        args: {},
+      },
+      "test tool 2": {
+        text: "Testing buffer contents.",
+        tool: "emacs_buffer_contents",
+        args: {},
+      },
+      "test tool 3": {
+        text: "Testing eval.",
+        tool: "emacs_eval",
+        args: { expression: "(+ 1 2)" },
+      },
+      "test tool 4": {
+        text: "Testing tree-sitter query.",
+        tool: "emacs_ts_query",
+        args: { buffer: "test.py", query: "(identifier) @name" },
+      },
+    });
+
     const ext = join(__dirname, "index.ts");
     const pi = startPi([llm, ext], tempDir, {
-      PATH: `${fakeDir}:${process.env.PATH}`,
+      EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
     });
 
     const events = [];
@@ -531,23 +572,42 @@ process.exit(1);
 
     try {
       await new Promise((r) => setTimeout(r, 500));
-      sendCommand(pi, { type: "get_tools" });
-
-      const toolsEvent = await waitForEvent(
-        events,
-        (e) => e.type === "tools"
-      );
-
-      const toolNames = (toolsEvent.tools || []).map((t) => t.name);
-      const expected = [
-        "emacs_eval",
+      
+      // Test each tool by triggering it
+      const expectedTools = [
         "emacs_list_buffers",
         "emacs_buffer_contents",
-        "emacs_ts_query",
+        "emacs_eval",
+        "emacs_ts_query"
       ];
-      for (const name of expected) {
-        if (!toolNames.includes(name))
-          return `Tool ${name} not found. Got: ${toolNames.join(", ")}`;
+      
+      for (let i = 0; i < expectedTools.length; i++) {
+        const toolName = expectedTools[i];
+        sendCommand(pi, { type: "prompt", message: `test tool ${i + 1}` });
+
+        // Wait for this specific tool to execute
+        await waitForEvent(
+          events,
+          (e) => e.type === "tool_execution_end" && e.toolName === toolName,
+          10000
+        );
+
+        // Wait for response before next prompt
+        await waitForResponse(events, 10000);
+        
+        // Small delay between prompts
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      // Verify all four tools were executed
+      const executedTools = events
+        .filter(e => e.type === "tool_execution_end")
+        .map(e => e.toolName);
+      
+      for (const toolName of expectedTools) {
+        if (!executedTools.includes(toolName)) {
+          return `Tool ${toolName} was not executed. Got: ${executedTools.join(", ")}`;
+        }
       }
 
       return true;

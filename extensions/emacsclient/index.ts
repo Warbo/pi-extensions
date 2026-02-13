@@ -26,6 +26,8 @@ export default function (pi: ExtensionAPI) {
   // Build shared emacsclient options using pi.exec
   function getOptions(signal?: AbortSignal): EmacsclientOptions {
     return {
+      // Allow tests to override emacsclient binary via environment variable
+      binary: process.env.EMACSCLIENT_BINARY || "emacsclient",
       exec: (cmd, args, opts) =>
         pi.exec(cmd, args, {
           signal: opts?.signal,
