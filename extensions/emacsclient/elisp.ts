@@ -123,15 +123,34 @@ export function buildTsQueryElisp(
     (let* ((lang ${langExpr})
            (root (treesit-buffer-root-node lang))
            (query-compiled (treesit-query-compile lang '${query}))
-           (matches (treesit-query-capture root query-compiled))
+           (captures (treesit-query-capture root query-compiled))
            (results '()))
-      (dolist (match matches)
-        (let* ((capture-name (car match))
-               (node (cdr match))
-               (result (condition-case err
-                         (progn ${actionExpr})
-                       (error (format "ERROR: %s" (error-message-string err))))))
-          (push (if (stringp result) result (format "%S" result)) results)))
+      ;; Group captures by their parent node to reconstruct matches
+      ;; A match is a set of captures that share a common parent node
+      (let ((match-table (make-hash-table :test 'eq)))
+        ;; First pass: group captures by parent node
+        (dolist (capture captures)
+          (let* ((capture-name (car capture))
+                 (node (cdr capture))
+                 (parent (treesit-node-parent node)))
+            ;; Use parent as key to group captures from same match
+            (let ((match-group (gethash parent match-table)))
+              (puthash parent (cons capture match-group) match-table))))
+        ;; Second pass: process each match group
+        (maphash
+          (lambda (parent-node capture-list)
+            ;; Build bindings: each capture name (without @) -> node
+            (let* ((bindings (mapcar (lambda (cap)
+                                       (cons (intern (substring (symbol-name (car cap)) 1))
+                                             (cdr cap)))
+                                     (nreverse capture-list)))
+                   ;; Bind 'node' to the first capture's node for backward compatibility
+                   (node (cdar capture-list))
+                   (result (condition-case err
+                             (eval (list 'let bindings '${actionExpr}))
+                           (error (format "ERROR: %s" (error-message-string err))))))
+              (push (if (stringp result) result (format "%S" result)) results)))
+          match-table))
       (nreverse results))))`;
 }
 

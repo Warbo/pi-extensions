@@ -68,6 +68,57 @@ function buildBufferContentsElisp(buffer, startChar, endChar) {
         (cons "pointColumn" (current-column))))))`;
 }
 
+function buildTsQueryElisp(buffer, query, lang, action) {
+  const bufExpr = `(or (get-buffer "${escapeElispString(buffer)}")
+       (find-buffer-visiting "${escapeElispString(buffer)}")
+       (let ((buf (find-file-noselect "${escapeElispString(buffer)}")))
+         (unless buf (error "Cannot open buffer for: ${escapeElispString(buffer)}"))
+         buf))`;
+
+  const langExpr = lang
+    ? `(or (treesit-language-at (point-min)) '${escapeElispString(lang)})`
+    : "(treesit-language-at (point-min))";
+
+  const actionExpr = action
+    ? action
+    : "(treesit-node-text node t)";
+
+  return `(json-encode
+  (with-current-buffer ${bufExpr}
+    (let* ((lang ${langExpr})
+           (root (treesit-buffer-root-node lang))
+           (query-compiled (treesit-query-compile lang '${query}))
+           (captures (treesit-query-capture root query-compiled))
+           (results '()))
+      ;; Group captures by their parent node to reconstruct matches
+      ;; A match is a set of captures that share a common parent node
+      (let ((match-table (make-hash-table :test 'eq)))
+        ;; First pass: group captures by parent node
+        (dolist (capture captures)
+          (let* ((capture-name (car capture))
+                 (node (cdr capture))
+                 (parent (treesit-node-parent node)))
+            ;; Use parent as key to group captures from same match
+            (let ((match-group (gethash parent match-table)))
+              (puthash parent (cons capture match-group) match-table))))
+        ;; Second pass: process each match group
+        (maphash
+          (lambda (parent-node capture-list)
+            ;; Build bindings: each capture name (without @) -> node
+            (let* ((bindings (mapcar (lambda (cap)
+                                       (cons (intern (substring (symbol-name (car cap)) 1))
+                                             (cdr cap)))
+                                     (nreverse capture-list)))
+                   ;; Bind 'node' to the first capture's node for backward compatibility
+                   (node (cdar capture-list))
+                   (result (condition-case err
+                             (eval (list 'let bindings '${actionExpr}))
+                           (error (format "ERROR: %s" (error-message-string err))))))
+              (push (if (stringp result) result (format "%S" result)) results)))
+          match-table))
+      (nreverse results))))`;
+}
+
 function buildEvalElisp(expression) {
   return `(json-encode
   (let ((result (progn ${expression})))
@@ -860,6 +911,155 @@ function stopEmacs() {
     assert(typeof result === "string", "Should return mode name string");
     assert(result.length > 0, "Mode name should be non-empty");
   });
+
+  // -----------------------------------------------------------------------
+  // Tree-sitter multi-capture tests (issue bee03c0a135aa875)
+  //
+  // These tests expose the bug where treesit-query-capture returns a flat
+  // list of (capture-name . node) pairs, and the code iterates over each
+  // capture individually rather than grouping by match. This means:
+  //   - A query with 2 captures per match produces 2N results, not N
+  //   - An action referencing multiple capture names simultaneously fails
+  // -----------------------------------------------------------------------
+
+  // Check if tree-sitter is available at all
+  const treesitAvailable = (() => {
+    try {
+      const r = emacsclient("(treesit-available-p)");
+      return r.trim() === "t";
+    } catch { return false; }
+  })();
+
+  // Find a usable tree-sitter grammar
+  const tsLang = (() => {
+    if (!treesitAvailable) return null;
+    for (const lang of ["python", "javascript", "c"]) {
+      try {
+        const r = emacsclient(`(treesit-language-available-p '${lang})`);
+        if (r.trim() === "t") return lang;
+      } catch {}
+    }
+    return null;
+  })();
+
+  await test("ts_query multi-capture - tree-sitter available", () => {
+    assert(treesitAvailable, "Emacs must have tree-sitter support (treesit-available-p)");
+    assert(tsLang, "At least one tree-sitter grammar (python, javascript, or c) must be installed");
+  });
+
+  if (tsLang) {
+    console.log(`# Tree-sitter tests using language: ${tsLang}`);
+
+    // Create a test file with multiple functions for tree-sitter queries
+    const tsTestFilePath = join(tempDir, tsLang === "python" ? "ts-test.py"
+                                       : tsLang === "javascript" ? "ts-test.js"
+                                       : "ts-test.c");
+    const tsTestContent = tsLang === "python"
+      ? "def foo():\n    return 1\n\ndef bar():\n    return 2\n\ndef baz():\n    return 3\n"
+      : tsLang === "javascript"
+      ? "function foo() {\n  return 1;\n}\n\nfunction bar() {\n  return 2;\n}\n\nfunction baz() {\n  return 3;\n}\n"
+      : "int foo() {\n  return 1;\n}\n\nint bar() {\n  return 2;\n}\n\nint baz() {\n  return 3;\n}\n";
+    writeFileSync(tsTestFilePath, tsTestContent, "utf-8");
+
+    // Open the file with tree-sitter mode
+    const tsModeSetup = tsLang === "python"
+      ? `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
+           (with-current-buffer buf (python-ts-mode)) buf)`
+      : tsLang === "javascript"
+      ? `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
+           (with-current-buffer buf (js-ts-mode)) buf)`
+      : `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
+           (with-current-buffer buf (c-ts-mode)) buf)`;
+    let tsModeOk = false;
+    await test("ts_query multi-capture - tree-sitter mode activates", () => {
+      emacsclient(tsModeSetup);
+      tsModeOk = true;
+    });
+
+    // The query that captures both function name and body
+    const multiCaptureQuery = tsLang === "python"
+      ? "(function_definition name: (identifier) @name body: (block) @body)"
+      : tsLang === "javascript"
+      ? "(function_declaration name: (identifier) @name body: (statement_block) @body)"
+      : "(function_definition declarator: (function_declarator declarator: (identifier) @name) body: (compound_statement) @body)";
+
+    const tsTestFile = tsLang === "python" ? "ts-test.py"
+                     : tsLang === "javascript" ? "ts-test.js"
+                     : "ts-test.c";
+
+    // --- Test 1: multi-capture query produces one result per match, not per capture ---
+    await test("ts_query multi-capture - should produce one result per match (3 functions)", async () => {
+      // With 3 functions and 2 captures each (@name, @body), the current
+      // buggy code produces 6 results (one per capture). It should produce 3.
+      const elisp = buildTsQueryElisp(
+        tsTestFile,
+        multiCaptureQuery,
+        tsLang,
+        "(treesit-node-text node t)"
+      );
+      const result = emacsclientParsed(elisp);
+      assert(Array.isArray(result), "Should return an array");
+      console.log(`#   Got ${result.length} results (expected 3, buggy gives 6)`);
+      assertEqual(result.length, 3,
+        `Should get 3 results (one per function match), got ${result.length}`);
+    });
+
+    // --- Test 2: action can reference multiple capture names simultaneously ---
+    await test("ts_query multi-capture - action should access both @name and @body", async () => {
+      // An action that uses both capture names. With the current bug, only
+      // `node` is bound; `name` and `body` variables are unbound, causing errors.
+      const action = '(format "%s" (treesit-node-text name t))';
+      const elisp = buildTsQueryElisp(
+        tsTestFile,
+        multiCaptureQuery,
+        tsLang,
+        action
+      );
+      const result = emacsclientParsed(elisp);
+      assert(Array.isArray(result), "Should return an array");
+      console.log(`#   Results: ${JSON.stringify(result)}`);
+      // None of the results should be errors from unbound variables
+      for (const r of result) {
+        assert(!r.startsWith("ERROR:"),
+          `Action should not error; got: ${r}`);
+      }
+      // Should get the three function names
+      assertEqual(result.length, 3, "Should get 3 results");
+      assert(result.includes("foo"), "Should find function foo");
+      assert(result.includes("bar"), "Should find function bar");
+      assert(result.includes("baz"), "Should find function baz");
+    });
+
+    // --- Test 3: action that correlates two captures from the same match ---
+    await test("ts_query multi-capture - action correlating name with body", async () => {
+      // An action that combines data from both captures in a single match.
+      // This is the canonical use case that's completely broken: getting the
+      // function name alongside info about its body.
+      const action = '(format "%s:%d" (treesit-node-text name t) (treesit-node-end body))';
+      const elisp = buildTsQueryElisp(
+        tsTestFile,
+        multiCaptureQuery,
+        tsLang,
+        action
+      );
+      const result = emacsclientParsed(elisp);
+      assert(Array.isArray(result), "Should return an array");
+      console.log(`#   Results: ${JSON.stringify(result)}`);
+      assertEqual(result.length, 3, "Should get 3 results (one per function)");
+      for (const r of result) {
+        assert(!r.startsWith("ERROR:"),
+          `Correlating action should not error; got: ${r}`);
+        assert(r.includes(":"),
+          `Each result should be "name:pos" format; got: ${r}`);
+      }
+      // Verify each function name appears exactly once
+      const names = result.map(r => r.split(":")[0]);
+      assert(names.includes("foo"), "Should have foo");
+      assert(names.includes("bar"), "Should have bar");
+      assert(names.includes("baz"), "Should have baz");
+    });
+
+  }
 
   // Cleanup
   stopEmacs();
