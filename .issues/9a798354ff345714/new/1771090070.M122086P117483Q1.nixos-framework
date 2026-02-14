@@ -1,0 +1,56 @@
+From: Chris Warburton
+Date: Sat, 14 Feb 2026 17:27:50 +0000
+State: new
+Subject: emacsclient test suite uses inline copies instead of testing actual implementation
+Message-Id: <9a798354ff345714-0-artemis@nixos-framework>
+
+## Problem
+
+The emacsclient extension test suite is written in JavaScript (`.mjs` files) while the implementation is TypeScript (`.ts` files). To avoid a compilation step, the test files contain **inline copies** of all the functions being tested.
+
+This defeats the entire purpose of testing:
+- Tests don't verify the actual implementation
+- Changes to `elisp.ts` require manual duplication to test files
+- Tests can pass while the real code is broken (or vice versa)
+
+From `unit_test.mjs`:
+```javascript
+// Inline copies of the pure functions (to avoid needing a TS build step in
+// unit tests — integration tests will test the real module via pi).
+```
+
+All three test files (`unit_test.mjs`, `emacs-integration.mjs`, `pi-integration.mjs`) have this problem.
+
+## Required Fix
+
+Rewrite the test suite in TypeScript so it can import the actual implementation:
+
+1. **Convert test files to TypeScript:**
+   - `unit_test.mjs` → `unit_test.test.ts`
+   - `emacs-integration.mjs` → `emacs-integration.test.ts`
+   - `pi-integration.mjs` → `pi-integration.test.ts`
+
+2. **Import real implementation:**
+   ```typescript
+   import { buildTsQueryElisp, parseEmacsclientOutput, ... } from './elisp.ts';
+   import { runEmacsclient } from './emacsclient.ts';
+   ```
+
+3. **Run with jiti** (which pi already uses for TS execution):
+   ```bash
+   jiti unit_test.test.ts
+   jiti emacs-integration.test.ts
+   jiti pi-integration.test.ts
+   ```
+
+4. **Update `test.sh`** to invoke the jiti-based test runners
+
+## Constraints
+
+- `test.sh` is the entry point for the test suite
+- Must work without a separate build/compilation step
+- Tests should be runnable directly from the Nix build environment
+
+## Related
+
+This issue blocks proper verification of the fix for bee03c0a135aa875 (multi-capture tree-sitter queries), since we need confidence that tests are actually testing the real code.
