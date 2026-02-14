@@ -26,9 +26,9 @@ done
 
 CODE=0
 echo "# Running unit tests..."
-node ./unit_test.mjs || CODE=1
+tsx ./unit_test.test.ts || CODE=1
 echo "# Running Emacs integration tests..."
-node ./emacs-integration.mjs || CODE=1
+tsx ./emacs-integration.test.ts || CODE=1
 echo "# Running Pi integration tests..."
-node ./pi-integration.mjs || CODE=1
+tsx ./pi-integration.test.ts || CODE=1
 exit "$CODE"

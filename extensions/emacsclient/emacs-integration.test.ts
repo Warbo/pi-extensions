@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
  * Emacs integration tests.
  *
@@ -6,161 +6,22 @@
  * through emacsclient, and verifies the results.
  *
  * Requires: emacs, emacsclient on PATH (provided by Nix build environment).
+ * Now imports the actual implementation instead of inline copies.
  */
 
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// ---------------------------------------------------------------------------
-// Inline pure functions (same as unit_test.mjs)
-// ---------------------------------------------------------------------------
-
-function escapeElispString(s) {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n");
-}
-
-function buildListBuffersElisp() {
-  return `(json-encode
-  (cl-remove-if
-    (lambda (b) (null b))
-    (mapcar
-      (lambda (buf)
-        (let ((name (buffer-name buf)))
-          (unless (string-prefix-p " " name)
-            (with-current-buffer buf
-              (list
-                (cons "name" name)
-                (cons "filepath" (buffer-file-name))
-                (cons "modified" (if (buffer-modified-p) t :json-false))
-                (cons "majorMode" (symbol-name major-mode))
-                (cons "size" (buffer-size))
-                (cons "visible" (if (get-buffer-window buf t) t :json-false)))))))
-      (buffer-list))))`;
-}
-
-function buildBufferContentsElisp(buffer, startChar, endChar) {
-  const bufExpr = buffer
-    ? `(or (get-buffer "${escapeElispString(buffer)}")
-         (find-buffer-visiting "${escapeElispString(buffer)}")
-         (error "No buffer found for: ${escapeElispString(buffer)}"))`
-    : "(current-buffer)";
-
-  return `(json-encode
-  (with-current-buffer ${bufExpr}
-    (let* ((start ${startChar !== undefined ? startChar : "(if (use-region-p) (region-beginning) (point-min))"})
-           (end ${endChar !== undefined ? endChar : "(if (use-region-p) (region-end) (point-max))"})
-           (content (buffer-substring-no-properties start end)))
-      (list
-        (cons "buffer" (buffer-name))
-        (cons "filepath" (buffer-file-name))
-        (cons "content" content)
-        (cons "length" (buffer-size))
-        (cons "lineCount" (count-lines (point-min) (point-max)))
-        (cons "majorMode" (symbol-name major-mode))
-        (cons "modified" (if (buffer-modified-p) t :json-false))
-        (cons "point" (point))
-        (cons "pointLine" (line-number-at-pos (point)))
-        (cons "pointColumn" (current-column))))))`;
-}
-
-function buildTsQueryElisp(buffer, query, lang, action) {
-  const bufExpr = `(or (get-buffer "${escapeElispString(buffer)}")
-       (find-buffer-visiting "${escapeElispString(buffer)}")
-       (let ((buf (find-file-noselect "${escapeElispString(buffer)}")))
-         (unless buf (error "Cannot open buffer for: ${escapeElispString(buffer)}"))
-         buf))`;
-
-  const langExpr = lang
-    ? `(or (treesit-language-at (point-min)) '${escapeElispString(lang)})`
-    : "(treesit-language-at (point-min))";
-
-  const actionExpr = action
-    ? action
-    : "(treesit-node-text node t)";
-
-  return `(json-encode
-  (with-current-buffer ${bufExpr}
-    (let* ((lang ${langExpr})
-           (root (treesit-buffer-root-node lang))
-           (query-compiled (treesit-query-compile lang '${query}))
-           (captures (treesit-query-capture root query-compiled))
-           (results '()))
-      ;; Group captures by their parent node to reconstruct matches
-      ;; A match is a set of captures that share a common parent node
-      (let ((match-table (make-hash-table :test 'eq)))
-        ;; First pass: group captures by parent node
-        (dolist (capture captures)
-          (let* ((capture-name (car capture))
-                 (node (cdr capture))
-                 (parent (treesit-node-parent node)))
-            ;; Use parent as key to group captures from same match
-            (let ((match-group (gethash parent match-table)))
-              (puthash parent (cons capture match-group) match-table))))
-        ;; Second pass: process each match group
-        (maphash
-          (lambda (parent-node capture-list)
-            ;; Build bindings: each capture name (without @) -> node
-            (let* ((bindings (mapcar (lambda (cap)
-                                       (cons (intern (substring (symbol-name (car cap)) 1))
-                                             (cdr cap)))
-                                     (nreverse capture-list)))
-                   ;; Bind 'node' to the first capture's node for backward compatibility
-                   (node (cdar capture-list))
-                   (result (condition-case err
-                             (eval (list 'let bindings '${actionExpr}))
-                           (error (format "ERROR: %s" (error-message-string err))))))
-              (push (if (stringp result) result (format "%S" result)) results)))
-          match-table))
-      (nreverse results))))`;
-}
-
-function buildEvalElisp(expression) {
-  return `(json-encode
-  (let ((result (progn ${expression})))
-    (cond
-      ((stringp result) result)
-      ((null result) :json-false)
-      ((eq result t) t)
-      ((numberp result) result)
-      ((listp result) result)
-      (t (format "%S" result)))))`;
-}
-
-/**
- * Unescape an Emacs prin1-printed string (content between outer quotes).
- * Prin1 escapes only: \ → \\  and  " → \"
- * Single-pass so \\n correctly becomes \n (JSON escape for newline).
- */
-function unescapeElispString(s) {
-  let result = "";
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "\\" && i + 1 < s.length) {
-      result += s[i + 1];
-      i++;
-    } else {
-      result += s[i];
-    }
-  }
-  return result;
-}
-
-function parseEmacsclientOutput(raw) {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    const inner = unescapeElispString(trimmed.slice(1, -1));
-    return JSON.parse(inner);
-  }
-  if (trimmed === "nil") return null;
-  if (trimmed === "t") return true;
-  const num = Number(trimmed);
-  if (!isNaN(num) && isFinite(num)) return num;
-  return trimmed;
-}
+import {
+  escapeElispString,
+  buildListBuffersElisp,
+  buildBufferContentsElisp,
+  buildTsQueryElisp,
+  buildEvalElisp,
+  parseEmacsclientOutput,
+} from "./elisp.ts";
 
 // ---------------------------------------------------------------------------
 // Test harness

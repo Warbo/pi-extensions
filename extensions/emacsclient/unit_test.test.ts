@@ -1,123 +1,20 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
  * Unit tests for emacsclient extension — pure function tests.
  *
  * Tests elisp generation and result parsing without any Emacs or Pi interaction.
+ * Now imports the actual implementation instead of inline copies.
  */
 
-// We import the compiled/transpiled module. Since Nix builds run through tsc,
-// we'll use a dynamic import of the .ts file via jiti (same as pi does), or
-// we inline the logic for testing. For unit tests we re-implement the pure
-// functions to test them in isolation.
-
-// ---------------------------------------------------------------------------
-// Inline copies of the pure functions (to avoid needing a TS build step in
-// unit tests — integration tests will test the real module via pi).
-// ---------------------------------------------------------------------------
-
-import fs from 'fs';
-
-function escapeElispString(s) {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n");
-}
-
-function buildListBuffersElisp() {
-  return `(json-encode
-  (cl-remove-if
-    (lambda (b) (null b))
-    (mapcar
-      (lambda (buf)
-        (let ((name (buffer-name buf)))
-          (unless (string-prefix-p " " name)
-            (with-current-buffer buf
-              (list
-                (cons "name" name)
-                (cons "filepath" (buffer-file-name))
-                (cons "modified" (if (buffer-modified-p) t :json-false))
-                (cons "majorMode" (symbol-name major-mode))
-                (cons "size" (buffer-size))
-                (cons "visible" (if (get-buffer-window buf t) t :json-false)))))))
-      (buffer-list))))`;
-}
-
-function buildBufferContentsElisp(buffer, startChar, endChar) {
-  const bufExpr = buffer
-    ? `(or (get-buffer "${escapeElispString(buffer)}")
-         (find-buffer-visiting "${escapeElispString(buffer)}")
-         (error "No buffer found for: ${escapeElispString(buffer)}"))`
-    : "(current-buffer)";
-
-  return `(json-encode
-  (with-current-buffer ${bufExpr}
-    (let* ((start ${startChar !== undefined ? startChar : "(if (use-region-p) (region-beginning) (point-min))"})
-           (end ${endChar !== undefined ? endChar : "(if (use-region-p) (region-end) (point-max))"})
-           (content (buffer-substring-no-properties start end)))
-      (list
-        (cons "buffer" (buffer-name))
-        (cons "filepath" (buffer-file-name))
-        (cons "content" content)
-        (cons "length" (buffer-size))
-        (cons "lineCount" (count-lines (point-min) (point-max)))
-        (cons "majorMode" (symbol-name major-mode))
-        (cons "modified" (if (buffer-modified-p) t :json-false))
-        (cons "point" (point))
-        (cons "pointLine" (line-number-at-pos (point)))
-        (cons "pointColumn" (current-column))))))`;
-}
-
-function buildEvalElisp(expression) {
-  return `(json-encode
-  (let ((result (progn ${expression})))
-    (cond
-      ((stringp result) result)
-      ((null result) :json-false)
-      ((eq result t) t)
-      ((numberp result) result)
-      ((listp result) result)
-      (t (format "%S" result)))))`;
-}
-
-/**
- * Unescape an Emacs prin1-printed string (content between outer quotes).
- *
- * Prin1 escapes only: \ → \\  and  " → \"
- * We reverse with a single-pass so \\n (escaped backslash + n) correctly
- * becomes \n (the JSON escape for newline).
- */
-function unescapeElispString(s) {
-  let result = "";
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "\\" && i + 1 < s.length) {
-      result += s[i + 1];
-      i++;
-    } else {
-      result += s[i];
-    }
-  }
-  return result;
-}
-
-function parseEmacsclientOutput(raw) {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    const inner = unescapeElispString(trimmed.slice(1, -1));
-    return JSON.parse(inner);
-  }
-  if (trimmed === "nil") return null;
-  if (trimmed === "t") return true;
-  const num = Number(trimmed);
-  if (!isNaN(num) && isFinite(num)) return num;
-  return trimmed;
-}
-
-function parseEmacsclientError(stderr) {
-  const trimmed = stderr.trim();
-  const match = trimmed.match(/^\*?ERROR\*?:\s*(.*)/s);
-  return match ? match[1].trim() : trimmed;
-}
+import {
+  escapeElispString,
+  buildListBuffersElisp,
+  buildBufferContentsElisp,
+  buildTsQueryElisp,
+  buildEvalElisp,
+  parseEmacsclientOutput,
+  parseEmacsclientError,
+} from "./elisp.ts";
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -126,11 +23,11 @@ function parseEmacsclientError(stderr) {
 let passed = 0;
 let failed = 0;
 
-function assert(condition, message) {
+function assert(condition: boolean, message?: string): asserts condition {
   if (!condition) throw new Error(message || "Assertion failed");
 }
 
-function assertEqual(actual, expected, message) {
+function assertEqual<T>(actual: T, expected: T, message?: string) {
   if (actual !== expected) {
     throw new Error(
       `${message || "assertEqual"}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
@@ -138,7 +35,7 @@ function assertEqual(actual, expected, message) {
   }
 }
 
-function assertDeepEqual(actual, expected, message) {
+function assertDeepEqual<T>(actual: T, expected: T, message?: string) {
   const a = JSON.stringify(actual);
   const e = JSON.stringify(expected);
   if (a !== e) {
@@ -148,14 +45,14 @@ function assertDeepEqual(actual, expected, message) {
   }
 }
 
-function test(name, fn) {
+function test(name: string, fn: () => void) {
   try {
     fn();
     console.log(`ok - ${name}`);
     passed++;
   } catch (err) {
     console.log(`not ok - ${name}`);
-    console.log(`  # ${err.message}`);
+    console.log(`  # ${err instanceof Error ? err.message : String(err)}`);
     failed++;
   }
 }

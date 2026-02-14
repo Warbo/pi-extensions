@@ -1,0 +1,37 @@
+From: Chris Warburton
+Date: Sat, 14 Feb 2026 17:40:01 +0000
+Subject: Re: comment
+Message-Id: <9a798354ff345714-fed7b5b21295da7f-artemis@nixos-framework>
+References: <9a798354ff345714-0-artemis@nixos-framework>
+In-Reply-To: <9a798354ff345714-0-artemis@nixos-framework>
+
+## Fixed
+
+Successfully converted all three test files from JavaScript (.mjs with inline copies) to TypeScript (.test.ts with real imports):
+
+### Changes Made:
+
+1. **Created TypeScript test files:**
+   - `unit_test.test.ts` - imports actual functions from `elisp.ts`
+   - `emacs-integration.test.ts` - imports actual functions from `elisp.ts`
+   - `pi-integration.test.ts` - already used real implementation via RPC, just converted to TypeScript
+
+2. **Updated test.sh:**
+   - Changed from `node ./unit_test.mjs` to `tsx ./unit_test.test.ts`
+   - Same for all three test files
+
+3. **Updated default.nix:**
+   - Added `pkgs.nodePackages.tsx` to buildInputs to enable TypeScript execution without compilation
+
+4. **Removed old .mjs files:**
+   - Deleted `unit_test.mjs`, `emacs-integration.mjs`, `pi-integration.mjs`
+
+### Benefits:
+
+✅ Tests now verify the **actual implementation** in `elisp.ts` and `emacsclient.ts`
+✅ No more manual duplication of code between implementation and tests
+✅ Changes to implementation are immediately reflected in tests
+✅ Still no build step required - tsx executes TypeScript directly
+✅ Works in Nix build environment with all required dependencies
+
+The test suite now properly validates that the actual implementation works correctly, which was the entire point of having tests in the first place.

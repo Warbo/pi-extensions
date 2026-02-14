@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
  * Pi integration tests.
  *
@@ -6,7 +6,7 @@
  * Uses a dummy LLM and a fake emacsclient script that returns canned responses.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -22,18 +22,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 let passed = 0;
 let failed = 0;
 
-function testPass(name) {
+function testPass(name: string) {
   console.log(`ok - ${name}`);
   passed++;
 }
 
-function testFail(name, reason) {
+function testFail(name: string, reason?: string) {
   console.log(`not ok - ${name}`);
   if (reason) console.log(`  # ${reason}`);
   failed++;
 }
 
-function waitForEvent(events, predicate, timeout = 15000) {
+function waitForEvent(events: any[], predicate: (e: any) => boolean, timeout = 15000): Promise<any> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
@@ -47,7 +47,7 @@ function waitForEvent(events, predicate, timeout = 15000) {
   });
 }
 
-function waitForResponse(events, timeout = 15000) {
+function waitForResponse(events: any[], timeout = 15000): Promise<any> {
   return waitForEvent(events, (e) => e.type === "response", timeout);
 }
 
@@ -55,7 +55,7 @@ function waitForResponse(events, timeout = 15000) {
 // Create a fake emacsclient that returns canned responses
 // ---------------------------------------------------------------------------
 
-function createFakeEmacsclient(dir, responses) {
+function createFakeEmacsclient(dir: string, responses: Record<string, string>): string {
   // responses is a map from elisp substring → raw stdout output
   const script = join(dir, "emacsclient");
   const jsScript = join(dir, "emacsclient.js");
@@ -105,7 +105,7 @@ exec node "${jsScript}" "$@"
 // Create dummy LLM extension that makes tool calls
 // ---------------------------------------------------------------------------
 
-function createDummyLLM(dir, toolCalls) {
+function createDummyLLM(dir: string, toolCalls: Record<string, any>): string {
   // toolCalls is a map of user-message-substring → { text, tool?, args? }
   const llmPath = join(dir, "dummy-llm.ts");
   const callsJson = JSON.stringify(toolCalls);
@@ -235,7 +235,7 @@ export default function (pi: ExtensionAPI) {
 // Pi process management
 // ---------------------------------------------------------------------------
 
-function startPi(extensions, cwd, env) {
+function startPi(extensions: string[], cwd: string, env: Record<string, string>): ChildProcess {
   const args = [
     "--mode", "rpc",
     "--provider", "dummy",
@@ -250,22 +250,21 @@ function startPi(extensions, cwd, env) {
   });
 }
 
-function sendCommand(proc, cmd) {
-  proc.stdin.write(JSON.stringify(cmd) + "\n");
+function sendCommand(proc: ChildProcess, cmd: any) {
+  proc.stdin!.write(JSON.stringify(cmd) + "\n");
 }
 
-async function runTest(name, testFn) {
+async function runTest(name: string, testFn: (tempDir: string) => Promise<boolean | string>) {
   const tempDir = join(
     tmpdir(),
     `pi-emacs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(tempDir, { recursive: true });
 
-  let pi;
   try {
     const result = await Promise.race([
       testFn(tempDir),
-      new Promise((_, reject) =>
+      new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Test timeout (30s)")), 30000)
       ),
     ]);
@@ -273,9 +272,9 @@ async function runTest(name, testFn) {
     if (result === true) {
       testPass(name);
     } else {
-      testFail(name, result || "Test returned false");
+      testFail(name, (typeof result === "string" ? result : undefined) || "Test returned false");
     }
-  } catch (err) {
+  } catch (err: any) {
     testFail(name, err.message);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -311,8 +310,8 @@ async function runTest(name, testFn) {
         EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
       });
 
-      const events = [];
-      const rl = createInterface({ input: pi.stdout });
+      const events: any[] = [];
+      const rl = createInterface({ input: pi.stdout! });
       rl.on("line", (line) => {
         try {
           events.push(JSON.parse(line));
@@ -334,7 +333,7 @@ async function runTest(name, testFn) {
 
         // The tool result should contain the buffer data
         const resultText =
-          toolEnd.result?.content?.find((c) => c.type === "text")?.text ?? "";
+          toolEnd.result?.content?.find((c: any) => c.type === "text")?.text ?? "";
         const parsed = JSON.parse(resultText);
         if (!Array.isArray(parsed))
           return `Expected array, got ${typeof parsed}`;
@@ -373,8 +372,8 @@ async function runTest(name, testFn) {
         EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
       });
 
-      const events = [];
-      const rl = createInterface({ input: pi.stdout });
+      const events: any[] = [];
+      const rl = createInterface({ input: pi.stdout! });
       rl.on("line", (line) => {
         try {
           events.push(JSON.parse(line));
@@ -395,7 +394,7 @@ async function runTest(name, testFn) {
         await waitForResponse(events);
 
         const resultText =
-          toolEnd.result?.content?.find((c) => c.type === "text")?.text ?? "";
+          toolEnd.result?.content?.find((c: any) => c.type === "text")?.text ?? "";
         const parsed = JSON.parse(resultText);
         if (parsed.buffer !== "test.py")
           return `Expected test.py, got ${parsed.buffer}`;
@@ -431,8 +430,8 @@ async function runTest(name, testFn) {
       EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
     });
 
-    const events = [];
-    const rl = createInterface({ input: pi.stdout });
+    const events: any[] = [];
+    const rl = createInterface({ input: pi.stdout! });
     rl.on("line", (line) => {
       try {
         events.push(JSON.parse(line));
@@ -452,7 +451,7 @@ async function runTest(name, testFn) {
       await waitForResponse(events);
 
       const resultText =
-        toolEnd.result?.content?.find((c) => c.type === "text")?.text ?? "";
+        toolEnd.result?.content?.find((c: any) => c.type === "text")?.text ?? "";
       if (resultText !== "42") return `Expected "42", got "${resultText}"`;
 
       return true;
@@ -491,8 +490,8 @@ process.exit(1);
         EMACSCLIENT_BINARY: script,
       });
 
-      const events = [];
-      const rl = createInterface({ input: pi.stdout });
+      const events: any[] = [];
+      const rl = createInterface({ input: pi.stdout! });
       rl.on("line", (line) => {
         try {
           events.push(JSON.parse(line));
@@ -513,7 +512,7 @@ process.exit(1);
         await waitForResponse(events);
 
         const resultText =
-          toolEnd.result?.content?.find((c) => c.type === "text")?.text ?? "";
+          toolEnd.result?.content?.find((c: any) => c.type === "text")?.text ?? "";
         if (!resultText.toLowerCase().includes("error"))
           return `Expected error in result, got: ${resultText}`;
 
@@ -562,8 +561,8 @@ process.exit(1);
       EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
     });
 
-    const events = [];
-    const rl = createInterface({ input: pi.stdout });
+    const events: any[] = [];
+    const rl = createInterface({ input: pi.stdout! });
     rl.on("line", (line) => {
       try {
         events.push(JSON.parse(line));
