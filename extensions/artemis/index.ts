@@ -64,6 +64,131 @@ const ArtemisParams = Type.Object({
 	})),
 });
 
+type CommandResult = {
+	args: string[];
+	cmdString: string;
+	editorScript?: string;
+} | {
+	error: true;
+	content: Array<{ type: string; text: string }>;
+	details: ArtemisDetails;
+};
+
+async function handleListCommand(params: any): Promise<CommandResult> {
+	const args: string[] = ["list"];
+	if (!params.all) {
+		// Default: only show state=new
+		args.push("-p", "state=new");
+	} else {
+		args.push("-a");
+	}
+	const cmdString = `git artemis ${args.join(" ")}`;
+	return { args, cmdString };
+}
+
+async function handleAddCommand(params: any): Promise<CommandResult> {
+	const args: string[] = ["add"];
+
+	if (params.issueId) {
+		// Adding comment to existing issue
+		if (!params.commentBody) {
+			return {
+				error: true,
+				content: [{
+					type: "text",
+					text: "Error: commentBody required when adding comment to issue"
+				}],
+				details: {
+					command: "git artemis add <id>",
+					stdout: "",
+					stderr: "missing commentBody",
+					exitCode: 1,
+				} as ArtemisDetails,
+			};
+		}
+
+		// Create editor script that uses SUBJECT/BODY env vars
+		const scriptContent = createEditorScript();
+		const editorScript = await writeEditorScript(scriptContent);
+
+		args.push(params.issueId);
+		const cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
+		return { args, cmdString, editorScript };
+
+	} else {
+		// Creating new issue
+		if (!params.subject || !params.body) {
+			return {
+				error: true,
+				content: [{
+					type: "text",
+					text: "Error: subject and body required when creating new issue"
+				}],
+				details: {
+					command: "git artemis add",
+					stdout: "",
+					stderr: "missing subject or body",
+					exitCode: 1,
+				} as ArtemisDetails,
+			};
+		}
+
+		// Create editor script that uses SUBJECT/BODY env vars
+		const scriptContent = createEditorScript();
+		const editorScript = await writeEditorScript(scriptContent);
+
+		const cmdString = `git artemis add (with EDITOR)`;
+		return { args, cmdString, editorScript };
+	}
+}
+
+async function handleShowCommand(params: any): Promise<CommandResult> {
+	if (!params.issueId) {
+		return {
+			error: true,
+			content: [{
+				type: "text",
+				text: "Error: issueId required for 'show' command"
+			}],
+			details: {
+				command: "git artemis show",
+				stdout: "",
+				stderr: "missing issueId",
+				exitCode: 1,
+			} as ArtemisDetails,
+		};
+	}
+
+	const args = ["show", params.issueId];
+	if (params.commentNumber !== undefined) {
+		args.push(String(params.commentNumber));
+	}
+	const cmdString = `git artemis ${args.join(" ")}`;
+	return { args, cmdString };
+}
+
+async function handleCloseCommand(params: any): Promise<CommandResult> {
+	if (!params.issueId) {
+		return {
+			error: true,
+			content: [{
+				type: "text",
+				text: "Error: issueId required for 'close' command"
+			}],
+			details: {
+				command: "git artemis add <id> -p ...",
+				stdout: "",
+				stderr: "missing issueId",
+				exitCode: 1,
+			} as ArtemisDetails,
+		};
+	}
+
+	const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n"];
+	const cmdString = `git artemis ${args.join(" ")}`;
+	return { args, cmdString };
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "git_artemis",
@@ -94,112 +219,16 @@ Use this to log problems, track tasks, and manage issue status.`,
 			let editorScript: string | undefined;
 
 			try {
-				const args: string[] = [];
-				let cmdString: string;
+				// Dispatch to appropriate command handler using object lookup
+				const commandHandlers: Record<string, (params: any) => Promise<CommandResult>> = {
+					list: handleListCommand,
+					add: handleAddCommand,
+					show: handleShowCommand,
+					close: handleCloseCommand,
+				};
 
-				if (params.command === "list") {
-					args.push("list");
-					if (!params.all) {
-						// Default: only show state=new
-						args.push("-p", "state=new");
-					} else {
-						args.push("-a");
-					}
-					cmdString = `git artemis ${args.join(" ")}`;
-
-				} else if (params.command === "add") {
-					args.push("add");
-
-					if (params.issueId) {
-						// Adding comment to existing issue
-						if (!params.commentBody) {
-							return {
-								content: [{
-									type: "text",
-									text: "Error: commentBody required when adding comment to issue"
-								}],
-								details: {
-									command: "git artemis add <id>",
-									stdout: "",
-									stderr: "missing commentBody",
-									exitCode: 1,
-								} as ArtemisDetails,
-							};
-						}
-
-						// Create editor script that uses SUBJECT/BODY env vars
-						const scriptContent = createEditorScript();
-						editorScript = await writeEditorScript(scriptContent);
-
-						args.push(params.issueId);
-						cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
-
-					} else {
-						// Creating new issue
-						if (!params.subject || !params.body) {
-							return {
-								content: [{
-									type: "text",
-									text: "Error: subject and body required when creating new issue"
-								}],
-								details: {
-									command: "git artemis add",
-									stdout: "",
-									stderr: "missing subject or body",
-									exitCode: 1,
-								} as ArtemisDetails,
-							};
-						}
-
-						// Create editor script that uses SUBJECT/BODY env vars
-						const scriptContent = createEditorScript();
-						editorScript = await writeEditorScript(scriptContent);
-
-						cmdString = `git artemis add (with EDITOR)`;
-					}
-
-				} else if (params.command === "show") {
-					if (!params.issueId) {
-						return {
-							content: [{
-								type: "text",
-								text: "Error: issueId required for 'show' command"
-							}],
-							details: {
-								command: "git artemis show",
-								stdout: "",
-								stderr: "missing issueId",
-								exitCode: 1,
-							} as ArtemisDetails,
-						};
-					}
-
-					args.push("show", params.issueId);
-					if (params.commentNumber !== undefined) {
-						args.push(String(params.commentNumber));
-					}
-					cmdString = `git artemis ${args.join(" ")}`;
-
-				} else if (params.command === "close") {
-					if (!params.issueId) {
-						return {
-							content: [{
-								type: "text",
-								text: "Error: issueId required for 'close' command"
-							}],
-							details: {
-								command: "git artemis add <id> -p ...",
-								stdout: "",
-								stderr: "missing issueId",
-								exitCode: 1,
-							} as ArtemisDetails,
-						};
-					}
-
-					args.push("add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n");
-					cmdString = `git artemis ${args.join(" ")}`;
-
-				} else {
+				const handler = commandHandlers[params.command];
+				if (!handler) {
 					return {
 						content: [{
 							type: "text",
@@ -213,6 +242,19 @@ Use this to log problems, track tasks, and manage issue status.`,
 						} as ArtemisDetails,
 					};
 				}
+
+				const commandResult = await handler(params);
+
+				// Check if command handler returned an error
+				if ("error" in commandResult) {
+					return {
+						content: commandResult.content,
+						details: commandResult.details,
+					};
+				}
+
+				const { args, cmdString } = commandResult;
+				editorScript = commandResult.editorScript;
 
 				// Show progress
 				onUpdate?.({
