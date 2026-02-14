@@ -51,7 +51,9 @@ with rec {
       {
         buildInputs = [
           artemis
-          pkgs.emacs
+          (pkgs.emacsPackages.emacsWithPackages (es: builtins.attrValues {
+            inherit (es.treesit-grammars) with-all-grammars;
+          }))
           pkgs.nodejs_20
           pkgs.nodePackages.typescript
           pkgs.llm-agents.pi
