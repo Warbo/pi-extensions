@@ -1,0 +1,43 @@
+From: Chris Warburton
+Date: Sat, 14 Feb 2026 16:31:41 +0000
+State: new
+Subject: emacs_ts_query tool has issues with capture variable binding
+Message-Id: <fdb6146c0f72d535-0-artemis@nixos-framework>
+
+When attempting to use the emacs_ts_query tool to find and analyze a switch statement in a TypeScript file, I encountered multiple errors related to capture variable binding in the action parameter.
+
+## Attempted Queries and Errors
+
+### Attempt 1: Query with field selectors
+```
+Query: (switch_statement value: (_) @switch_value body: (switch_body) @switch_body)
+Action: (list (treesit-node-start node) (treesit-node-end node) ...)
+Error: "Query pattern is malformed: 'Syntax error at', 1, ..."
+```
+
+### Attempt 2-4: Simple queries with different capture names
+```
+Query: (switch_statement) @switch
+Action: (list (treesit-node-start sw) (treesit-node-end sw) ...)
+Error: "Symbol's value as variable is void: @switch"
+
+Query: (switch_statement) @sw
+Error: "Symbol's value as variable is void: @sw"
+
+Query: (switch_statement) @match
+Error: "Symbol's value as variable is void: @match"
+```
+
+## Analysis
+
+The "Symbol's value as variable is void" error suggests the elisp action code is trying to evaluate the capture name (e.g., `@sw`) as a symbol directly, rather than binding it as a variable from the tree-sitter query capture. 
+
+It appears the capture variables from the tree-sitter query aren't being properly bound/available in the elisp action scope, or there may be an issue with how the @ symbol is being handled in the variable name parsing.
+
+## Expected Behavior
+
+Based on the tool description, capture names like `@name` from the query should be bound as variables (without the @) that can be used in the action elisp expression to reference the captured tree-sitter nodes.
+
+## Workaround
+
+I used the `read` tool instead to manually locate and refactor the code.

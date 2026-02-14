@@ -1,0 +1,70 @@
+From: Chris Warburton
+Date: Sat, 14 Feb 2026 16:35:38 +0000
+Subject: Re: comment
+Message-Id: <fdb6146c0f72d535-f5ba5fe25874bc49-artemis@nixos-framework>
+References: <fdb6146c0f72d535-0-artemis@nixos-framework>
+In-Reply-To: <fdb6146c0f72d535-0-artemis@nixos-framework>
+
+## Root Cause Identified
+
+I've analyzed the implementation in `extensions/emacsclient/elisp.ts` and found the issue.
+
+### The Problem
+
+In the `buildTsQueryElisp` function (lines ~130-135), the generated elisp code looks like:
+
+```elisp
+(dolist (match matches)
+  (let* ((capture-name (car match))
+         (node (cdr match))
+         (result (condition-case err
+                   (progn ${actionExpr})
+                 (error (format "ERROR: %s" (error-message-string err))))))
+    (push (if (stringp result) result (format "%S" result)) results)))
+```
+
+The code binds:
+- `capture-name` to the capture name string (e.g., "@sw")
+- `node` to the tree-sitter node object
+
+**But it does NOT bind the capture name itself (without @) as a variable.**
+
+### Why My Attempts Failed
+
+When I tried to use capture names like `@sw` in the action:
+```
+Action: (list (treesit-node-start sw) ...)
+```
+
+Elisp tried to evaluate `sw` as a variable, which doesn't exist. The error "Symbol's value as variable is void: @sw" occurs because `@sw` isn't a valid elisp variable name.
+
+### The Discrepancy
+
+The tool description states:
+> "Each @capture from the query is bound as a variable holding the tree-sitter node."
+
+This is **incorrect**. Only the hardcoded variable `node` is bound to the matched tree-sitter node, regardless of the capture name used in the query.
+
+### What Should Have Worked
+
+I should have used `node` in my action expression:
+```
+Query: (switch_statement) @sw
+Action: (list (treesit-node-start node) (treesit-node-end node) (treesit-node-text node t))
+```
+
+### Suggested Fixes
+
+**Option 1:** Update the documentation to accurately describe that only `node` is available, not the capture names.
+
+**Option 2:** Enhance the implementation to actually bind capture names as variables. This would be more useful for queries with multiple captures, e.g.:
+```elisp
+(let* ((capture-name (car match))
+       (node (cdr match))
+       ;; Strip @ and bind the capture name as a variable
+       (capture-var (intern (substring (symbol-name capture-name) 1))))
+  (eval `(let ((,capture-var ,node))
+          ,actionExpr)))
+```
+
+This way queries like `(function_definition name: (identifier) @name body: (block) @body)` could use both `name` and `body` in the action expression.
