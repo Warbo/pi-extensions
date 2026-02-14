@@ -34,33 +34,33 @@ const ArtemisParams = Type.Object({
 	command: StringEnum(["list", "add", "show", "close"] as const, {
 		description: "Command: list (show issues), add (create issue or comment), show (view issue/comment), close (mark issue resolved)",
 	}),
-	
+
 	// For list
-	all: Type.Optional(Type.Boolean({ 
-		description: "Show all issues instead of just state=new (default: false)" 
+	all: Type.Optional(Type.Boolean({
+		description: "Show all issues instead of just state=new (default: false)"
 	})),
-	
+
 	// For add (new issue)
-	subject: Type.Optional(Type.String({ 
-		description: "Issue subject/title (required for creating new issue)" 
+	subject: Type.Optional(Type.String({
+		description: "Issue subject/title (required for creating new issue)"
 	})),
-	body: Type.Optional(Type.String({ 
-		description: "Issue body/description (required for creating new issue)" 
+	body: Type.Optional(Type.String({
+		description: "Issue body/description (required for creating new issue)"
 	})),
-	
+
 	// For add (comment), show, close
-	issueId: Type.Optional(Type.String({ 
-		description: "Issue ID (required for comment, show, close)" 
+	issueId: Type.Optional(Type.String({
+		description: "Issue ID (required for comment, show, close)"
 	})),
-	
+
 	// For add (comment)
-	commentBody: Type.Optional(Type.String({ 
-		description: "Comment text (required for adding comment)" 
+	commentBody: Type.Optional(Type.String({
+		description: "Comment text (required for adding comment)"
 	})),
-	
+
 	// For show (comment)
-	commentNumber: Type.Optional(Type.Number({ 
-		description: "Comment number to show (optional, for 'show' command)" 
+	commentNumber: Type.Optional(Type.Number({
+		description: "Comment number to show (optional, for 'show' command)"
 	})),
 });
 
@@ -74,11 +74,11 @@ Commands:
 - list: List issues (shows state=new by default, use all=true for all issues)
   Example: git_artemis(command="list")
   Example: git_artemis(command="list", all=true)
-  
+
 - add: Create issue OR add comment
   New issue: git_artemis(command="add", subject="Bug in parser", body="Details about the bug...")
   Add comment: git_artemis(command="add", issueId="abc123", commentBody="Found the root cause...")
-  
+
 - show: Show issue or specific comment
   Show issue: git_artemis(command="show", issueId="abc123")
   Show comment: git_artemis(command="show", issueId="abc123", commentNumber=0)
@@ -87,16 +87,16 @@ Commands:
   Example: git_artemis(command="close", issueId="abc123")
 
 Use this to log problems, track tasks, and manage issue status.`,
-		
+
 		parameters: ArtemisParams,
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			let editorScript: string | undefined;
-			
+
 			try {
 				const args: string[] = [];
 				let cmdString: string;
-				
+
 				if (params.command === "list") {
 					args.push("list");
 					if (!params.all) {
@@ -106,10 +106,10 @@ Use this to log problems, track tasks, and manage issue status.`,
 						args.push("-a");
 					}
 					cmdString = `git artemis ${args.join(" ")}`;
-					
+
 				} else if (params.command === "add") {
 					args.push("add");
-					
+
 					if (params.issueId) {
 						// Adding comment to existing issue
 						if (!params.commentBody) {
@@ -126,14 +126,14 @@ Use this to log problems, track tasks, and manage issue status.`,
 								} as ArtemisDetails,
 							};
 						}
-						
+
 						// Create editor script that uses SUBJECT/BODY env vars
 						const scriptContent = createEditorScript();
 						editorScript = await writeEditorScript(scriptContent);
-						
+
 						args.push(params.issueId);
 						cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
-						
+
 					} else {
 						// Creating new issue
 						if (!params.subject || !params.body) {
@@ -150,14 +150,14 @@ Use this to log problems, track tasks, and manage issue status.`,
 								} as ArtemisDetails,
 							};
 						}
-						
+
 						// Create editor script that uses SUBJECT/BODY env vars
 						const scriptContent = createEditorScript();
 						editorScript = await writeEditorScript(scriptContent);
-						
+
 						cmdString = `git artemis add (with EDITOR)`;
 					}
-					
+
 				} else if (params.command === "show") {
 					if (!params.issueId) {
 						return {
@@ -173,13 +173,13 @@ Use this to log problems, track tasks, and manage issue status.`,
 							} as ArtemisDetails,
 						};
 					}
-					
+
 					args.push("show", params.issueId);
 					if (params.commentNumber !== undefined) {
 						args.push(String(params.commentNumber));
 					}
 					cmdString = `git artemis ${args.join(" ")}`;
-					
+
 				} else if (params.command === "close") {
 					if (!params.issueId) {
 						return {
@@ -195,10 +195,10 @@ Use this to log problems, track tasks, and manage issue status.`,
 							} as ArtemisDetails,
 						};
 					}
-					
+
 					args.push("add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n");
 					cmdString = `git artemis ${args.join(" ")}`;
-					
+
 				} else {
 					return {
 						content: [{
@@ -234,7 +234,7 @@ Use this to log problems, track tasks, and manage issue status.`,
 						envVars.push(`SUBJECT='${params.subject?.replace(/'/g, "'\\''") || ""}'`);
 						envVars.push(`BODY='${params.body?.replace(/'/g, "'\\''") || ""}'`);
 					}
-					
+
 					const shellCmd = `${envVars.join(' ')} git artemis ${args.join(' ')}`;
 					result = await pi.exec("sh", ["-c", shellCmd], {
 						signal,
@@ -277,7 +277,7 @@ Use this to log problems, track tasks, and manage issue status.`,
 						exitCode: result.code,
 					} as ArtemisDetails,
 				};
-				
+
 			} finally {
 				// Clean up editor script
 				if (editorScript) {
@@ -292,25 +292,25 @@ Use this to log problems, track tasks, and manage issue status.`,
 
 		renderCall(args, theme) {
 			let text = theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", args.command);
-			
+
 			if (args.issueId) {
 				text += " " + theme.fg("muted", args.issueId);
 			}
-			
+
 			if (args.subject) {
 				text += " " + theme.fg("dim", `"${args.subject}"`);
 			}
-			
+
 			if (args.commentNumber !== undefined) {
 				text += " " + theme.fg("dim", `#${args.commentNumber}`);
 			}
-			
+
 			return new Text(text, 0, 0);
 		},
 
 		renderResult(result, { expanded }, theme) {
 			const details = result.details as ArtemisDetails | undefined;
-			
+
 			if (!details) {
 				const text = result.content[0];
 				return new Text(text?.type === "text" ? text.text : "", 0, 0);
@@ -328,39 +328,39 @@ Use this to log problems, track tasks, and manage issue status.`,
 				if (!output) {
 					return new Text(theme.fg("dim", "No issues found"), 0, 0);
 				}
-				
+
 				const lines = output.split("\n").filter(l => l.trim());
 				const displayLines = expanded ? lines : lines.slice(0, 10);
-				
+
 				let text = theme.fg("success", "✓ ") + theme.fg("muted", `${lines.length} issue(s):`);
 				for (const line of displayLines) {
 					// Highlight issue IDs
 					const highlighted = line.replace(/([a-f0-9]{16})/g, (id) => theme.fg("accent", id));
 					text += "\n" + theme.fg("muted", highlighted);
 				}
-				
+
 				if (!expanded && lines.length > 10) {
 					text += "\n" + theme.fg("dim", `... ${lines.length - 10} more`);
 				}
-				
+
 				return new Text(text, 0, 0);
 			}
-			
+
 			// For show command
 			if (details.command.includes("show")) {
 				const lines = output.split("\n");
 				const displayLines = expanded ? lines : lines.slice(0, 8);
-				
+
 				let text = theme.fg("success", "✓");
 				text += "\n" + theme.fg("muted", displayLines.join("\n"));
-				
+
 				if (!expanded && lines.length > 8) {
 					text += "\n" + theme.fg("dim", `... ${lines.length - 8} more lines`);
 				}
-				
+
 				return new Text(text, 0, 0);
 			}
-			
+
 			// For add/close commands - extract issue ID if present
 			if (details.command.includes("add")) {
 				const issueIdMatch = output.match(/([a-f0-9]{16})/);
@@ -369,7 +369,7 @@ Use this to log problems, track tasks, and manage issue status.`,
 					return new Text(theme.fg("success", "✓ ") + theme.fg("muted", output.replace(issueIdMatch[1], issueId)), 0, 0);
 				}
 			}
-			
+
 			return new Text(theme.fg("success", "✓ ") + theme.fg("muted", output), 0, 0);
 		},
 	});
