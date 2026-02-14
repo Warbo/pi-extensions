@@ -1,0 +1,84 @@
+From: Chris Warburton
+Date: Sat, 14 Feb 2026 16:51:48 +0000
+State: new
+Subject: emacs_ts_query processes captures individually instead of grouping by match
+Message-Id: <bee03c0a135aa875-0-artemis@nixos-framework>
+
+## Problem
+
+The `emacs_ts_query` tool has a fundamental design flaw: it processes tree-sitter captures **individually** rather than grouping them by **match**. This makes multi-capture queries unusable.
+
+## Current Behavior
+
+When a query has multiple captures per match, like:
+```
+(function_definition name: (identifier) @name body: (block) @body)
+```
+
+The user expects:
+- Action runs **once per function** (once per match)
+- Both `name` and `body` are available in the action simultaneously
+- Example action: `(format "%s: %d lines" (treesit-node-text name) (count-lines ...))`
+
+What actually happens:
+- `treesit-query-capture` returns a flat list: `((name . node1) (body . node2) (name . node3) ...)`
+- Action runs **once per capture** with only one binding available at a time
+- First run: only `name` from function 1
+- Second run: only `body` from function 1  
+- Third run: only `name` from function 2
+- No way to correlate name with body
+
+## Root Cause
+
+In `extensions/emacsclient/elisp.ts`, the `buildTsQueryElisp` function uses:
+```elisp
+(treesit-query-capture root query-compiled)
+```
+
+This returns individual captures, not grouped matches.
+
+Then it loops:
+```elisp
+(dolist (match matches)  ; misleading - should be named 'capture'
+  (let* ((capture-name (car match))
+         (node (cdr match))
+         ...))
+```
+
+## Impact
+
+The tool is currently only usable for:
+- Queries with a **single capture** 
+- Actions that process captures independently
+
+Any query requiring correlation between multiple captures (names with bodies, parameters with types, etc.) doesn't work.
+
+## Required Fix
+
+### Implementation Changes
+
+1. **Use a different Emacs API** that groups captures by match, or post-process the capture list to reconstruct matches
+
+2. **Bind all captures from a match** as variables in the action scope:
+```elisp
+(dolist (match matches)
+  (let* ((bindings (mapcar (lambda (cap) 
+                             (cons (intern (substring (symbol-name (car cap)) 1))
+                                   (cdr cap)))
+                           match)))
+    (eval `(let ,bindings
+             ,actionExpr))))
+```
+
+This would bind `name` and `body` (without @) as variables for the action.
+
+### Documentation Changes
+
+Update the tool description to clarify:
+- Actions run once per **match**, not per capture
+- All captures from a match are bound as variables (e.g., `@name` becomes variable `name`)
+- Provide examples with multi-capture queries
+
+## Related Issue
+
+This is related to issue fdb6146c0f72d535, which identified that capture names aren't bound as variables. That issue is actually a symptom of this deeper architectural problem.

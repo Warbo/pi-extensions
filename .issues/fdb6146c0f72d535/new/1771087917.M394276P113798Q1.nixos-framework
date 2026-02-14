@@ -1,0 +1,18 @@
+From: Chris Warburton
+Date: Sat, 14 Feb 2026 16:51:57 +0000
+Subject: Re: comment
+Message-Id: <fdb6146c0f72d535-fbbcad2d30cd19ba-artemis@nixos-framework>
+References: <fdb6146c0f72d535-0-artemis@nixos-framework>
+In-Reply-To: <fdb6146c0f72d535-0-artemis@nixos-framework>
+
+## Update: Deeper Issue Identified
+
+After further investigation, I've discovered that the variable binding problem is actually a symptom of a more fundamental architectural issue.
+
+The current implementation processes tree-sitter **captures individually** rather than grouping them by **match**. This means:
+
+1. For queries with multiple captures (e.g., `@name` and `@body`), the action runs separately for each capture, not once per match
+2. There's no way to access multiple captures together, which is why trying to bind them as separate variables wasn't implemented
+3. The tool is essentially limited to single-capture queries
+
+I've opened a new issue **bee03c0a135aa875** that describes this architectural problem and proposes solutions. Fixing that issue would naturally resolve the capture variable binding problem described here.
