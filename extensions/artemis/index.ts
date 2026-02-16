@@ -74,120 +74,122 @@ type CommandResult = {
 	details: ArtemisDetails;
 };
 
-async function handleListCommand(params: any): Promise<CommandResult> {
-	const args: string[] = ["list"];
-	if (!params.all) {
-		// Default: only show state=new
-		args.push("-p", "state=new");
-	} else {
-		args.push("-a");
-	}
-	const cmdString = `git artemis ${args.join(" ")}`;
-	return { args, cmdString };
-}
+const commandHandlers: Record<string, (params: any) => Promise<CommandResult>> = {
+	list: async (params: any): Promise<CommandResult> => {
+		const args: string[] = ["list"];
+		if (!params.all) {
+			// Default: only show state=new
+			args.push("-p", "state=new");
+		} else {
+			args.push("-a");
+		}
+		const cmdString = `git artemis ${args.join(" ")}`;
+		return { args, cmdString };
+	},
 
-async function handleAddCommand(params: any): Promise<CommandResult> {
-	const args: string[] = ["add"];
+	add: async (params: any): Promise<CommandResult> => {
+		const args: string[] = ["add"];
 
-	if (params.issueId) {
-		// Adding comment to existing issue
-		if (!params.commentBody) {
+		if (params.issueId) {
+			// Adding comment to existing issue
+			if (!params.commentBody) {
+				return {
+					error: true,
+					content: [{
+						type: "text",
+						text: "Error: commentBody required when adding comment to issue"
+					}],
+					details: {
+						command: "git artemis add <id>",
+						stdout: "",
+						stderr: "missing commentBody",
+						exitCode: 1,
+					} as ArtemisDetails,
+				};
+			}
+
+			// Create editor script that uses SUBJECT/BODY env vars
+			const scriptContent = createEditorScript();
+			const editorScript = await writeEditorScript(scriptContent);
+
+			args.push(params.issueId);
+			const cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
+			return { args, cmdString, editorScript };
+
+		} else {
+			// Creating new issue
+			if (!params.subject || !params.body) {
+				return {
+					error: true,
+					content: [{
+						type: "text",
+						text: "Error: subject and body required when creating new issue"
+					}],
+					details: {
+						command: "git artemis add",
+						stdout: "",
+						stderr: "missing subject or body",
+						exitCode: 1,
+					} as ArtemisDetails,
+				};
+			}
+
+			// Create editor script that uses SUBJECT/BODY env vars
+			const scriptContent = createEditorScript();
+			const editorScript = await writeEditorScript(scriptContent);
+
+			const cmdString = `git artemis add (with EDITOR)`;
+			return { args, cmdString, editorScript };
+		}
+	},
+
+	show: async (params: any): Promise<CommandResult> => {
+		if (!params.issueId) {
 			return {
 				error: true,
 				content: [{
 					type: "text",
-					text: "Error: commentBody required when adding comment to issue"
+					text: "Error: issueId required for 'show' command"
 				}],
 				details: {
-					command: "git artemis add <id>",
+					command: "git artemis show",
 					stdout: "",
-					stderr: "missing commentBody",
+					stderr: "missing issueId",
 					exitCode: 1,
 				} as ArtemisDetails,
 			};
 		}
 
-		// Create editor script that uses SUBJECT/BODY env vars
-		const scriptContent = createEditorScript();
-		const editorScript = await writeEditorScript(scriptContent);
+		const args = ["show", params.issueId];
+		if (params.commentNumber !== undefined) {
+			args.push(String(params.commentNumber));
+		}
+		const cmdString = `git artemis ${args.join(" ")}`;
+		return { args, cmdString };
+	},
 
-		args.push(params.issueId);
-		const cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
-		return { args, cmdString, editorScript };
-
-	} else {
-		// Creating new issue
-		if (!params.subject || !params.body) {
+	close: async (params: any): Promise<CommandResult> => {
+		if (!params.issueId) {
 			return {
 				error: true,
 				content: [{
 					type: "text",
-					text: "Error: subject and body required when creating new issue"
+					text: "Error: issueId required for 'close' command"
 				}],
 				details: {
-					command: "git artemis add",
+					command: "git artemis add <id> -p ...",
 					stdout: "",
-					stderr: "missing subject or body",
+					stderr: "missing issueId",
 					exitCode: 1,
 				} as ArtemisDetails,
 			};
 		}
 
-		// Create editor script that uses SUBJECT/BODY env vars
-		const scriptContent = createEditorScript();
-		const editorScript = await writeEditorScript(scriptContent);
-
-		const cmdString = `git artemis add (with EDITOR)`;
-		return { args, cmdString, editorScript };
-	}
-}
-
-async function handleShowCommand(params: any): Promise<CommandResult> {
-	if (!params.issueId) {
-		return {
-			error: true,
-			content: [{
-				type: "text",
-				text: "Error: issueId required for 'show' command"
-			}],
-			details: {
-				command: "git artemis show",
-				stdout: "",
-				stderr: "missing issueId",
-				exitCode: 1,
-			} as ArtemisDetails,
-		};
-	}
-
-	const args = ["show", params.issueId];
-	if (params.commentNumber !== undefined) {
-		args.push(String(params.commentNumber));
-	}
-	const cmdString = `git artemis ${args.join(" ")}`;
-	return { args, cmdString };
-}
-
-async function handleCloseCommand(params: any): Promise<CommandResult> {
-	if (!params.issueId) {
-		return {
-			error: true,
-			content: [{
-				type: "text",
-				text: "Error: issueId required for 'close' command"
-			}],
-			details: {
-				command: "git artemis add <id> -p ...",
-				stdout: "",
-				stderr: "missing issueId",
-				exitCode: 1,
-			} as ArtemisDetails,
-		};
-	}
-
-	const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n"];
-	const cmdString = `git artemis ${args.join(" ")}`;
-	return { args, cmdString };
-}
+		const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n"];
+		const cmdString = `git artemis ${args.join(" ")}`;
+		return { args, cmdString };
+	},
+};
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
@@ -220,13 +222,6 @@ Use this to log problems, track tasks, and manage issue status.`,
 
 			try {
 				// Dispatch to appropriate command handler using object lookup
-				const commandHandlers: Record<string, (params: any) => Promise<CommandResult>> = {
-					list: handleListCommand,
-					add: handleAddCommand,
-					show: handleShowCommand,
-					close: handleCloseCommand,
-				};
-
 				const handler = commandHandlers[params.command];
 				if (!handler) {
 					return {
