@@ -106,11 +106,7 @@ export function buildTsQueryElisp(
          buf))`;
 
   const langExpr = lang
-    ? `(treesit-language-at (point-min))` // fallback; prefer explicit
-      .replace(
-        /treesit-language-at \(point-min\)/,
-        `(or (treesit-language-at (point-min)) '${escapeElispString(lang)})`
-      )
+    ? `(or (treesit-language-at (point-min)) '${lang})`
     : "(treesit-language-at (point-min))";
 
   // Default action: return the text of the first capture's node
@@ -118,40 +114,37 @@ export function buildTsQueryElisp(
     ? action
     : "(treesit-node-text node t)";
 
+  // Count the number of @captures in the query to know how to group
+  const captureCount = (query.match(/@\w+/g) || []).length;
   return `(json-encode
   (with-current-buffer ${bufExpr}
     (let* ((lang ${langExpr})
            (root (treesit-buffer-root-node lang))
-           (query-compiled (treesit-query-compile lang '${query}))
+           (query-compiled (treesit-query-compile lang "${escapeElispString(query)}"))
            (captures (treesit-query-capture root query-compiled))
-           (results '()))
-      ;; Group captures by their parent node to reconstruct matches
-      ;; A match is a set of captures that share a common parent node
-      (let ((match-table (make-hash-table :test 'eq)))
-        ;; First pass: group captures by parent node
-        (dolist (capture captures)
-          (let* ((capture-name (car capture))
-                 (node (cdr capture))
-                 (parent (treesit-node-parent node)))
-            ;; Use parent as key to group captures from same match
-            (let ((match-group (gethash parent match-table)))
-              (puthash parent (cons capture match-group) match-table))))
-        ;; Second pass: process each match group
-        (maphash
-          (lambda (parent-node capture-list)
-            ;; Build bindings: each capture name (without @) -> node
-            (let* ((bindings (mapcar (lambda (cap)
-                                       (cons (intern (substring (symbol-name (car cap)) 1))
-                                             (cdr cap)))
-                                     (nreverse capture-list)))
-                   ;; Bind 'node' to the first capture's node for backward compatibility
-                   (node (cdar capture-list))
-                   (result (condition-case err
-                             (eval (list 'let bindings '${actionExpr}))
-                           (error (format "ERROR: %s" (error-message-string err))))))
-              (push (if (stringp result) result (format "%S" result)) results)))
-          match-table))
-      (nreverse results))))`;
+           (results '())
+           (capture-count ${captureCount}))
+      ;; Group consecutive captures into matches
+      ;; treesit-query-capture returns captures in order, with all captures
+      ;; from a single match appearing consecutively
+      (let ((i 0))
+        (while (< i (length captures))
+          ;; Collect capture-count captures for this match
+          (let* ((match-captures (cl-subseq captures i (min (+ i capture-count) (length captures))))
+                 ;; Extract capture names and nodes
+                 (capture-names (mapcar (lambda (cap) (intern (symbol-name (car cap))))
+                                       match-captures))
+                 (capture-nodes (mapcar 'cdr match-captures))
+                 ;; Build a lambda: (lambda (name body ...) (let ((node <first-param>)) <action>))
+                 (lambda-body (list 'let (list (list 'node (car capture-names)))
+                                   (car (read-from-string "${escapeElispString(actionExpr)}"))))
+                 (lambda-form (list 'lambda capture-names lambda-body))
+                 (result (condition-case err
+                           (apply (eval lambda-form) capture-nodes)
+                         (error (format "ERROR: %s" (error-message-string err))))))
+            (push (if (stringp result) result (format "%S" result)) results)
+            (setq i (+ i capture-count)))))
+      (nreverse results)))))`;
 }
 
 /**

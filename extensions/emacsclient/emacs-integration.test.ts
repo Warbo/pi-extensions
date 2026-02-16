@@ -783,7 +783,7 @@ function stopEmacs() {
   //   - An action referencing multiple capture names simultaneously fails
   // -----------------------------------------------------------------------
 
-  // Check if tree-sitter is available at all
+  // Check if tree-sitter is available with Python support
   const treesitAvailable = (() => {
     try {
       const r = emacsclient("(treesit-available-p)");
@@ -791,89 +791,62 @@ function stopEmacs() {
     } catch { return false; }
   })();
 
-  // Find a usable tree-sitter grammar
-  const tsLang = (() => {
-    if (!treesitAvailable) return null;
-    for (const lang of ["python", "javascript", "c"]) {
-      try {
-        const r = emacsclient(`(treesit-language-available-p '${lang})`);
-        if (r.trim() === "t") return lang;
-      } catch {}
-    }
-    return null;
+  const pythonAvailable = (() => {
+    if (!treesitAvailable) return false;
+    try {
+      const r = emacsclient("(treesit-language-available-p 'python)");
+      return r.trim() === "t";
+    } catch { return false; }
   })();
 
   await test("ts_query multi-capture - tree-sitter available", () => {
     assert(treesitAvailable, "Emacs must have tree-sitter support (treesit-available-p)");
-    assert(tsLang, "At least one tree-sitter grammar (python, javascript, or c) must be installed");
+    assert(pythonAvailable, "Python tree-sitter grammar must be installed");
   });
 
-  if (tsLang) {
-    console.log(`# Tree-sitter tests using language: ${tsLang}`);
+  if (pythonAvailable) {
+    console.log("# Tree-sitter tests using language: python");
 
     // Create a test file with multiple functions for tree-sitter queries
-    const tsTestFilePath = join(tempDir, tsLang === "python" ? "ts-test.py"
-                                       : tsLang === "javascript" ? "ts-test.js"
-                                       : "ts-test.c");
-    const tsTestContent = tsLang === "python"
-      ? "def foo():\n    return 1\n\ndef bar():\n    return 2\n\ndef baz():\n    return 3\n"
-      : tsLang === "javascript"
-      ? "function foo() {\n  return 1;\n}\n\nfunction bar() {\n  return 2;\n}\n\nfunction baz() {\n  return 3;\n}\n"
-      : "int foo() {\n  return 1;\n}\n\nint bar() {\n  return 2;\n}\n\nint baz() {\n  return 3;\n}\n";
+    const tsTestFilePath = join(tempDir, "ts-test.py");
+    const tsTestContent = "def foo():\n    return 1\n\ndef bar():\n    return 2\n\ndef baz():\n    return 3\n";
     writeFileSync(tsTestFilePath, tsTestContent, "utf-8");
 
     // Open the file with tree-sitter mode
-    const tsModeSetup = tsLang === "python"
-      ? `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
-           (with-current-buffer buf (python-ts-mode)) buf)`
-      : tsLang === "javascript"
-      ? `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
-           (with-current-buffer buf (js-ts-mode)) buf)`
-      : `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
-           (with-current-buffer buf (c-ts-mode)) buf)`;
-    let tsModeOk = false;
+    const tsModeSetup = `(let ((buf (find-file-noselect "${escapeElispString(tsTestFilePath)}")))
+           (with-current-buffer buf (python-ts-mode)) buf)`;
+    
     await test("ts_query multi-capture - tree-sitter mode activates", () => {
       emacsclient(tsModeSetup);
-      tsModeOk = true;
     });
 
     // The query that captures both function name and body
-    const multiCaptureQuery = tsLang === "python"
-      ? "(function_definition name: (identifier) @name body: (block) @body)"
-      : tsLang === "javascript"
-      ? "(function_declaration name: (identifier) @name body: (statement_block) @body)"
-      : "(function_definition declarator: (function_declarator declarator: (identifier) @name) body: (compound_statement) @body)";
-
-    const tsTestFile = tsLang === "python" ? "ts-test.py"
-                     : tsLang === "javascript" ? "ts-test.js"
-                     : "ts-test.c";
+    const multiCaptureQuery = "(function_definition name: (identifier) @name body: (block) @body)";
+    const tsTestFile = "ts-test.py";
 
     // --- Test 1: multi-capture query produces one result per match, not per capture ---
     await test("ts_query multi-capture - should produce one result per match (3 functions)", async () => {
-      // With 3 functions and 2 captures each (@name, @body), the current
-      // buggy code produces 6 results (one per capture). It should produce 3.
+      // With 3 functions & 2 captures each (@name, @body), it should produce 3.
       const elisp = buildTsQueryElisp(
         tsTestFile,
         multiCaptureQuery,
-        tsLang,
+        "python",
         "(treesit-node-text node t)"
       );
       const result = emacsclientParsed(elisp);
       assert(Array.isArray(result), "Should return an array");
-      console.log(`#   Got ${result.length} results (expected 3, buggy gives 6)`);
       assertEqual(result.length, 3,
         `Should get 3 results (one per function match), got ${result.length}`);
     });
 
     // --- Test 2: action can reference multiple capture names simultaneously ---
     await test("ts_query multi-capture - action should access both @name and @body", async () => {
-      // An action that uses both capture names. With the current bug, only
-      // `node` is bound; `name` and `body` variables are unbound, causing errors.
+      // An action that uses both capture names.
       const action = '(format "%s" (treesit-node-text name t))';
       const elisp = buildTsQueryElisp(
         tsTestFile,
         multiCaptureQuery,
-        tsLang,
+        "python",
         action
       );
       const result = emacsclientParsed(elisp);
@@ -894,13 +867,11 @@ function stopEmacs() {
     // --- Test 3: action that correlates two captures from the same match ---
     await test("ts_query multi-capture - action correlating name with body", async () => {
       // An action that combines data from both captures in a single match.
-      // This is the canonical use case that's completely broken: getting the
-      // function name alongside info about its body.
       const action = '(format "%s:%d" (treesit-node-text name t) (treesit-node-end body))';
       const elisp = buildTsQueryElisp(
         tsTestFile,
         multiCaptureQuery,
-        tsLang,
+        "python",
         action
       );
       const result = emacsclientParsed(elisp);
