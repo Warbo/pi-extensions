@@ -1,8 +1,9 @@
 From: Chris Warburton
 Date: Mon, 16 Feb 2026 14:26:08 +0000
-State: new
+State: resolved
 Subject: emacsclient: replace built in 'read' command
 Message-Id: <dcfb26bae49f11bf-0-artemis@nixos-framework>
+resolution: fixed
 
 Add a custom 'read' tool to our 'emacsclient' extension. This read tool is
 parameterised by a max length (see built-in 'read' tool) and does the following:
