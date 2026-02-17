@@ -1,5 +1,7 @@
 # Pi Extensions
 
+`pkarr://4ysq1yefe7ozox8m3qzbjzk6a5b8ae36jhn8xd1hszyht8ka9b`
+
 Extensions for [pi](https://github.com/badlogic/pi) coding agent.
 
 ## Available Extensions
