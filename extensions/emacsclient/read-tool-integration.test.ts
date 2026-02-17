@@ -79,6 +79,26 @@ function emacsclientParsed(elisp: string): any {
   return parseEmacsclientOutput(emacsclient(elisp));
 }
 
+function cleanupBuffers() {
+  // Kill all non-default buffers and deactivate regions
+  try {
+    emacsclient(`(progn
+      ;; Deactivate mark
+      (deactivate-mark t)
+      ;; Kill file-visiting buffers
+      (mapc (lambda (buf)
+              (when (and (buffer-live-p buf)
+                        (buffer-file-name buf))
+                (with-current-buffer buf
+                  (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+            (buffer-list))
+      nil)`);
+  } catch (err) {
+    // Ignore errors in cleanup
+  }
+}
+
 function startEmacs() {
   execFileSync("emacs", [
     "--daemon=" + socketName,
@@ -404,6 +424,8 @@ test("read - detects changed buffer", () => {
 });
 
 test("read - detects unchanged buffer", () => {
+  cleanupBuffers();
+
   const elisp = buildReadElisp(testFile, { pos: 1, length: 10 });
   const result = emacsclientParsed(elisp);
 
@@ -422,6 +444,8 @@ test("read - reports correct major mode", () => {
 // ---------------------------------------------------------------------------
 
 test("read - region is null when no active region", () => {
+  cleanupBuffers();
+
   const elisp = buildReadElisp(testFile, { pos: 1, length: 10 });
   const result = emacsclientParsed(elisp);
 
@@ -445,6 +469,8 @@ test("read - captures active region", () => {
 });
 
 test("read - region content matches expected text", () => {
+  cleanupBuffers();
+
   // Set up region
   emacsclient(`(progn
     (find-file "${testFile}")
@@ -459,6 +485,8 @@ test("read - region content matches expected text", () => {
 });
 
 test("read - region truncated when too large", () => {
+  cleanupBuffers();
+
   // Set up large region
   emacsclient(`(progn
     (find-file "${largeFile}")
@@ -466,7 +494,8 @@ test("read - region truncated when too large", () => {
     (push-mark (point) t t)
     (goto-char (point-max)))`);
 
-  const elisp = buildReadElisp(largeFile, { pos: 1, length: 10 }, 1000);
+  // Don't specify pos - we want to preserve the region
+  const elisp = buildReadElisp(largeFile, { length: 10 }, 1000);
   const result = emacsclientParsed(elisp);
 
   assert(result.region !== null, "Should have region");
@@ -479,6 +508,8 @@ test("read - region truncated when too large", () => {
 // ---------------------------------------------------------------------------
 
 test("read - process is null for regular file buffer", () => {
+  cleanupBuffers();
+
   const elisp = buildReadElisp(testFile, { pos: 1, length: 10 });
   const result = emacsclientParsed(elisp);
 
@@ -501,6 +532,8 @@ test("read - detects buffer with process", () => {
 // ---------------------------------------------------------------------------
 
 test("read - tramp is null for local file", () => {
+  cleanupBuffers();
+
   const elisp = buildReadElisp(testFile, { pos: 1, length: 10 });
   const result = emacsclientParsed(elisp);
 

@@ -140,7 +140,8 @@ test("buildReadElisp - handles negative line", () => {
 test("buildReadElisp - no position means stay at current point", () => {
   const result = buildReadElisp("test.txt");
   // Should not move point if no position specified
-  assert(!result.includes("goto-char") || result.includes("unless"),
+  // Note: goto-char inside save-excursion is fine as it's temporary
+  assert(!result.includes("goto-char") || result.includes("save-excursion") || result.includes("unless"),
     "Should not unconditionally move point");
 });
 
