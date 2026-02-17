@@ -219,6 +219,8 @@ export function parseEmacsclientOutput(raw: string): unknown {
   // but handle gracefully
   if (trimmed === "nil") return null;
   if (trimmed === "t") return true;
+  if (trimmed === ":json-false") return false;
+  if (trimmed === ":json-null") return null;
   const num = Number(trimmed);
   if (!isNaN(num) && isFinite(num)) return num;
 
