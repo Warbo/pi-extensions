@@ -1,0 +1,120 @@
+From: Chris Warburton
+Date: Mon, 16 Feb 2026 14:26:08 +0000
+State: new
+Subject: emacsclient: replace built in 'read' command
+Message-Id: <dcfb26bae49f11bf-0-artemis@nixos-framework>
+
+Add a custom 'read' tool to our 'emacsclient' extension. This read tool is
+parameterised by a max length (see built-in 'read' tool) and does the following:
+
+ - Accept a name
+ - Accept an optional pos(ition) OR (line (number) AND optional col(umn number))
+ - Accept an optional length OR lines (default: max length)
+ - Accept an optional "temp" boolean (default: false)
+ - Return either an error (e.g. couldn't connect) or a buffer object (see below)
+
+When executed, the following will happen:
+
+ - Use emacsclient to connect to an existing Emacs session
+ - If the given name contains '/', treat it as a path:
+   - Check whether there is already a buffer for that path
+   - If not, open one using 'find-file' (works even if file/dir doesn't exist)
+   - TRAMP paths like `/ssh:foo@bar:/baz` should work without special handling
+ - If the given name does not contain '/', treat it as a buffer name:
+   - Check whether there is already an Emacs buffer with that name
+   - If not, use 'find-file' to open a buffer for a file with that name in CWD
+ - If a position, line or col was given, buffer's point is moved there
+   - 'pos' overrides line/col, if both were accidentally given
+   - Negative values move point backwards (useful if there was already a buffer)
+ - A snippet of the buffer contents is copied
+   - The snippet starts at point
+   - If no length or lines were given, the max length will be used
+   - Snippet will end after whichever is the shortest of the following:
+     - The max length
+     - The requested length
+     - The requested number of lines
+     - The end of buffer
+ - If temp is true:
+   - The old position of point is restored
+   - If the buffer was not already open, it is killed
+
+The result will be an object containing:
+
+ - name: buffer name; don't assume it will match filename, due to disambiguation
+ - path: absolute, null if the buffer is not visiting a file
+ - exists: whether visited file exists on disk; null if not visiting a file
+ - changed: whether there are unsaved changes in the buffer
+ - size: the total size of the buffer
+ - lines: the number of lines in the buffer
+ - mode: the buffer's major-mode
+ - eglot: whether eglot is enabled in the buffer
+ - ts: whether tree-sitter is enabled in the buffer
+ - tramp: the buffer's TRAMP remote (null if there isn't one)
+ - new: whether we opened a new buffer (false if it was already open)
+ - dead: if we killed the buffer (i.e. temp is true, and it was not already open)
+ - A 'process' field: null if the buffer has no process, otherwise an object containing:
+   - state: whether it's running or not
+   - cmd: the commandline of the process. Can get it like `(f-read (format "/proc/%d/cmdline" (process-id (get-buffer-process (current-buffer)))))`
+ - A 'point' field, for an object containing:
+   - pos: the raw number of the point's position
+   - line: the point's current line
+   - col: the point's current column
+ - A 'region' field: null if there is no active region, otherwise an object containing:
+   - content: the region's content (up to the max size)
+   - truncated: a boolean indicating whether the region exceeded the max size
+   - A 'start' field, for an object containing:
+     - pos: the position of the start of region
+     - line: which line the region starts on
+     - col: which column the region starts at
+   - An 'end' field, for an object containing:
+     - pos: the position of the end of region
+     - line: which line the region ends on
+     - col: which column the region ends at
+ - A 'got' field, for an object containing:
+   - content: the snippet that was copied from the buffer
+   - length: the length of the content (may be less than was asked for)
+   - lines: the number of lines in content
+   - A 'start' field, for an object containing:
+     - pos: the buffer position we read content from
+     - line: the line number containing pos
+     - col: the column number of pos
+   - An 'end' field, for an object containing:
+     - pos: the buffer position content ends on
+     - line: the line number containing pos
+     - col: the column number of pos
+   - truncated: whether more was requested than is present in content:
+     - true if no length/lines were specified, and there is more available in
+       the buffer after the end of content
+     - true if we asked for more than the max, and there is more available in
+       the buffer after the end of content
+     - false if content has the requested length
+     - false if content has the requested number of lines and the final line
+       was not trucated
+     - false if content is shorter than requested, but reached the end of the
+       buffer (so no more remains)
+
+These options and fields have been chosen to cover many sorts of interaction,
+whilst minimising ambiguity and errors:
+
+- To simply read a file's content:
+  - Give options:
+    - Use file's path as name: either absolute or relative
+      - Relative paths in CWD can begin with `./` to force file path semantics
+    - Use pos 1
+      - This forces reading from the start of the buffer (in case it's already open)
+    - Do not give a length or line count, so the max length will be returned
+    - Use temp = true, so Emacs state will be restored
+  - Check result:
+    - File content will be in 'got.content'
+    - If 'got.truncated', we can send another read using 'got.end.pos'; etc.
+
+- If we're working with a buffer, a typical interaction might be:
+  - Give options:
+    - Use buffer name as name
+    - Do not give a position, in order to see what's at point
+      - Or use negative lines like -5, to see more context around point
+    - Give line count to read a certain number of lines, e.g. 10
+    - Do not give temp
+  - Check result:
+    - 'got.content' will contain the requested lines around point
+    - Check state like 'exists', 'changed', etc.

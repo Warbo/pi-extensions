@@ -1,0 +1,33 @@
+From: Chris Warburton
+Date: Mon, 16 Feb 2026 15:35:07 +0000
+State: new
+Subject: emacsclient: replace built-in 'edit'
+Message-Id: <8538125ca0f8fa31-0-artemis@nixos-framework>
+
+Not sure what the best approach is for this. We should encourage 'write' for
+pure additions, whilst this should feel more like a diff. However, LLMs can
+struggle to write diffs, since reproducing the exact previous content is not
+well suited to their abilities.
+
+There have been some interesting experiments, e.g. I like the idea of
+https://blog.can.ac/2026/02/12/the-harness-problem/ to tag lines with their
+number and a short hash of their content. However, that requires more extensive
+changes to `read` as well...
+
+My current thinking:
+
+ - Have `read` return a set of `spans`:
+   - Each span refers to a particular section of the buffer
+   - We can use a bunch of heuristics to make them more meaningful/useful
+   - Tree-sitter is an obvious source of spans
+   - A simple fallback is to provide spans covering each 1/Nth of the buffer
+   - Each span has an ID, which includes a hash of its content
+     - The hash only needs to be, say, 4 chars; just truncate
+     - If the span's contents have changed since the LLM read it, the hash won't
+       match.
+ - Edit operations must be given a span ID, to edit or replace, etc.
+ - Also provide a 'narrow' tool, which will narrow the buffer to a given
+   span ID, and return a new list of spans from inside that.
+   - Even better: take a list of span IDs, to support sub-spans!
+ - Future work: extend `read` and `write` to accept span IDs to narrow their
+   buffers!
