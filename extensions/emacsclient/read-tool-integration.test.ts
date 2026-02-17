@@ -42,9 +42,9 @@ function assertContains(haystack: string, needle: string, message?: string) {
   }
 }
 
-async function test(name: string, fn: () => void | Promise<void>) {
+function test(name: string, fn: () => void) {
   try {
-    await fn();
+    fn();
     console.log(`ok - ${name}`);
     passed++;
   } catch (err) {
