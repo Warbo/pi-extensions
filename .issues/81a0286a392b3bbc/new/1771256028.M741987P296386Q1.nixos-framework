@@ -1,8 +1,9 @@
 From: Chris Warburton
 Date: Mon, 16 Feb 2026 15:25:58 +0000
-State: new
+State: resolved
 Subject: emacsclient: replace builtin 'write' command
 Message-Id: <81a0286a392b3bbc-0-artemis@nixos-framework>
+resolution: fixed
 
 Similar to dcfb26bae49f11bf (replacing read):
 
