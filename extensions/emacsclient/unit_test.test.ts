@@ -9,7 +9,6 @@
 import {
   escapeElispString,
   buildListBuffersElisp,
-  buildBufferContentsElisp,
   buildTsQueryElisp,
   buildEvalElisp,
   parseEmacsclientOutput,
@@ -122,64 +121,6 @@ test("buildListBuffersElisp - includes expected fields", () => {
     "majorMode",
     "size",
     "visible",
-  ]) {
-    assert(result.includes(`"${field}"`), `Should include field: ${field}`);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// buildBufferContentsElisp tests
-// ---------------------------------------------------------------------------
-
-test("buildBufferContentsElisp - no args uses current-buffer", () => {
-  const result = buildBufferContentsElisp();
-  assert(result.includes("(current-buffer)"), "Should use current-buffer");
-});
-
-test("buildBufferContentsElisp - with buffer name", () => {
-  const result = buildBufferContentsElisp("main.py");
-  assert(result.includes('"main.py"'), "Should reference buffer name");
-  assert(result.includes("get-buffer"), "Should try get-buffer");
-  assert(
-    result.includes("find-buffer-visiting"),
-    "Should try find-buffer-visiting"
-  );
-});
-
-test("buildBufferContentsElisp - escapes buffer name", () => {
-  const result = buildBufferContentsElisp('file "special".txt');
-  assert(
-    result.includes('file \\"special\\".txt'),
-    "Should escape quotes in buffer name"
-  );
-});
-
-test("buildBufferContentsElisp - with region", () => {
-  const result = buildBufferContentsElisp("buf", 10, 50);
-  assert(result.includes("10"), "Should include start position");
-  assert(result.includes("50"), "Should include end position");
-});
-
-test("buildBufferContentsElisp - without region uses defaults", () => {
-  const result = buildBufferContentsElisp("buf");
-  assert(result.includes("use-region-p"), "Should check for active region");
-  assert(result.includes("point-min"), "Should fall back to point-min");
-  assert(result.includes("point-max"), "Should fall back to point-max");
-});
-
-test("buildBufferContentsElisp - includes expected fields", () => {
-  const result = buildBufferContentsElisp();
-  for (const field of [
-    "buffer",
-    "filepath",
-    "content",
-    "length",
-    "lineCount",
-    "majorMode",
-    "modified",
-    "point",
-    "pointLine",
-    "pointColumn",
   ]) {
     assert(result.includes(`"${field}"`), `Should include field: ${field}`);
   }
@@ -312,28 +253,6 @@ test("parseEmacsclientError - multiline error", () => {
 
 test("buildListBuffersElisp - balanced parentheses", () => {
   const elisp = buildListBuffersElisp();
-  let depth = 0;
-  for (const ch of elisp) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    assert(depth >= 0, "Parentheses went negative");
-  }
-  assertEqual(depth, 0, "Parentheses not balanced");
-});
-
-test("buildBufferContentsElisp - balanced parentheses (no args)", () => {
-  const elisp = buildBufferContentsElisp();
-  let depth = 0;
-  for (const ch of elisp) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    assert(depth >= 0, "Parentheses went negative");
-  }
-  assertEqual(depth, 0, "Parentheses not balanced");
-});
-
-test("buildBufferContentsElisp - balanced parentheses (with args)", () => {
-  const elisp = buildBufferContentsElisp("test.py", 1, 100);
   let depth = 0;
   for (const ch of elisp) {
     if (ch === "(") depth++;

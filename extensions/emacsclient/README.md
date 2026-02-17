@@ -63,18 +63,7 @@ path (failing if it doesn't exist).
 
 **Returns:** { results: array of `action` results (one string per match), errors: error messages (if any) }
 
-### Tool 2: emacs_buffer_contents
-
-Query buffer content and metadata.
-
-Parameters:
-- buffer (optional): buffer name, default current buffer
-- region (optional): [startChar, endChar] to get just a region. Defaults to
-  current region (if any).
-
-Returns: { buffer, filepath, content, length, lineCount, majorMode, modified, point, pointLine, pointColumn }
-
-### Tool 3: emacs_list_buffers
+### Tool 2: emacs_list_buffers
 
 List available buffers.
 

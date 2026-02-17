@@ -17,7 +17,6 @@ import { join } from "node:path";
 import {
   escapeElispString,
   buildListBuffersElisp,
-  buildBufferContentsElisp,
   buildTsQueryElisp,
   buildEvalElisp,
   parseEmacsclientOutput,
@@ -700,67 +699,6 @@ function stopEmacs() {
     const bufs = emacsclientParsed(elisp);
     const found = bufs.find((b) => b.name === "test-file.txt");
     assert(found, "test-file.txt should be in buffer list");
-  });
-
-  await test("emacs_buffer_contents - by buffer name", () => {
-    const elisp = buildBufferContentsElisp("test-file.txt");
-    const result = emacsclientParsed(elisp);
-    assertEqual(result.buffer, "test-file.txt");
-    assertEqual(result.filepath, testFilePath);
-    assert(
-      result.content.includes("line one"),
-      "Content should include file text"
-    );
-    assert(result.lineCount >= 3, "Should have at least 3 lines");
-    assertEqual(result.modified, false);
-    assert(typeof result.point === "number", "point should be a number");
-    assert(typeof result.pointLine === "number", "pointLine should be a number");
-    assert(typeof result.pointColumn === "number", "pointColumn should be a number");
-  });
-
-  await test("emacs_buffer_contents - by file path", () => {
-    const elisp = buildBufferContentsElisp(testFilePath);
-    const result = emacsclientParsed(elisp);
-    assertEqual(result.buffer, "test-file.txt");
-    assert(
-      result.content.includes("line two"),
-      "Content should include file text"
-    );
-  });
-
-  await test("emacs_buffer_contents - with char range", () => {
-    const elisp = buildBufferContentsElisp("test-file.txt", 1, 9);
-    const result = emacsclientParsed(elisp);
-    // Emacs positions are 1-indexed; chars 1-8 should be "line one"
-    assertEqual(result.content, "line one");
-  });
-
-  await test("emacs_buffer_contents - nonexistent buffer errors", () => {
-    const elisp = buildBufferContentsElisp("nonexistent-buffer-xyz");
-    try {
-      emacsclient(elisp);
-      throw new Error("Should have thrown");
-    } catch (err) {
-      assert(
-        err.message.includes("No buffer found") || err.status !== 0,
-        "Should error for missing buffer"
-      );
-    }
-  });
-
-  // Test with modified buffer
-  await test("emacs_buffer_contents - modified flag", () => {
-    // Insert text to modify the buffer
-    emacsclient(
-      `(with-current-buffer "test-file.txt" (goto-char (point-max)) (insert "new line\\n"))`
-    );
-    const elisp = buildBufferContentsElisp("test-file.txt");
-    const result = emacsclientParsed(elisp);
-    assertEqual(result.modified, true);
-    assert(
-      result.content.includes("new line"),
-      "Should contain inserted text"
-    );
   });
 
   // Test eval with buffer context

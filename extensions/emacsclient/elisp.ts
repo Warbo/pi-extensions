@@ -47,45 +47,6 @@ export function buildListBuffersElisp(): string {
 }
 
 /**
- * Build elisp that returns JSON-encoded buffer content and metadata.
- */
-export function buildBufferContentsElisp(
-  buffer?: string,
-  startChar?: number,
-  endChar?: number
-): string {
-  const bufExpr = buffer
-    ? `(or (get-buffer "${escapeElispString(buffer)}")
-         (find-buffer-visiting "${escapeElispString(buffer)}")
-         (error "No buffer found for: ${escapeElispString(buffer)}"))`
-    : "(current-buffer)";
-
-  const regionExpr =
-    startChar !== undefined && endChar !== undefined
-      ? `(let ((start ${startChar}) (end ${endChar})))`
-      : `(let ((start (if (use-region-p) (region-beginning) (point-min)))
-              (end (if (use-region-p) (region-end) (point-max)))))`;
-
-  // We build a single let* form for clarity
-  return `(json-encode
-  (with-current-buffer ${bufExpr}
-    (let* ((start ${startChar !== undefined ? startChar : "(if (use-region-p) (region-beginning) (point-min))"})
-           (end ${endChar !== undefined ? endChar : "(if (use-region-p) (region-end) (point-max))"})
-           (content (buffer-substring-no-properties start end)))
-      (list
-        (cons "buffer" (buffer-name))
-        (cons "filepath" (buffer-file-name))
-        (cons "content" content)
-        (cons "length" (buffer-size))
-        (cons "lineCount" (count-lines (point-min) (point-max)))
-        (cons "majorMode" (symbol-name major-mode))
-        (cons "modified" (if (buffer-modified-p) t :json-false))
-        (cons "point" (point))
-        (cons "pointLine" (line-number-at-pos (point)))
-        (cons "pointColumn" (current-column))))))`;
-}
-
-/**
  * Build elisp that runs a tree-sitter query against a buffer, optionally
  * executing an action expression for each match.
  *

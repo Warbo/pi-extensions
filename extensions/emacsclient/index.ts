@@ -4,7 +4,6 @@
  * Provides tools for interacting with a running Emacs session:
  *   - read: Read files/buffers with comprehensive metadata and navigation
  *   - emacs_eval: Evaluate arbitrary elisp
- *   - emacs_buffer_contents: Query buffer content and metadata
  *   - emacs_list_buffers: List open buffers
  *   - emacs_ts_query: Run tree-sitter queries against buffers
  *
@@ -16,7 +15,6 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import {
   buildListBuffersElisp,
-  buildBufferContentsElisp,
   buildTsQueryElisp,
   buildEvalElisp,
   buildReadElisp,
@@ -107,57 +105,6 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text }],
         details: { buffers },
-      };
-    },
-  });
-
-  // ------------------------------------------------------------------
-  // Tool: emacs_buffer_contents
-  // ------------------------------------------------------------------
-  pi.registerTool({
-    name: "emacs_buffer_contents",
-    label: "Emacs Buffer Contents",
-    description:
-      "Get the content and metadata of an Emacs buffer. " +
-      "Returns buffer name, filepath, content, length, line count, major mode, " +
-      "modification status, and point position. " +
-      "Optionally restrict to a character range.",
-    parameters: Type.Object({
-      buffer: Type.Optional(
-        Type.String({
-          description:
-            "Buffer name or file path. Defaults to the current buffer.",
-        })
-      ),
-      startChar: Type.Optional(
-        Type.Number({ description: "Start character position (1-indexed)" })
-      ),
-      endChar: Type.Optional(
-        Type.Number({ description: "End character position" })
-      ),
-    }),
-    async execute(toolCallId, params, signal) {
-      const elisp = buildBufferContentsElisp(
-        params.buffer,
-        params.startChar,
-        params.endChar
-      );
-      const result = await emacsEval(elisp, getOptions(signal));
-
-      if (!result.success) {
-        return {
-          content: [{ type: "text", text: `Error: ${result.error}` }],
-          details: { error: result.error },
-          isError: true,
-        };
-      }
-
-      const data = result.data as Record<string, unknown>;
-      const text = JSON.stringify(data, null, 2);
-
-      return {
-        content: [{ type: "text", text }],
-        details: data,
       };
     },
   });
