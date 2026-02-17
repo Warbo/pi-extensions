@@ -46,8 +46,10 @@ export default function (pi: ExtensionAPI) {
     name: "emacs_eval",
     label: "Emacs Eval",
     description:
-      "Evaluate an Emacs Lisp expression in the running Emacs session and return the result. " +
-      "Use this for any Emacs interaction not covered by the other emacs_* tools.",
+      "Eval a small ELisp expression in our long-running Emacs session and " +
+        "return its result. Do not use for big expressions (write those in " +
+        "buffers instead). Emacs buffers can be used to store state." +
+        "Use other tools where possible; this is to complement them.",
     parameters: Type.Object({
       expression: Type.String({
         description: "Emacs Lisp expression to evaluate",
@@ -84,7 +86,7 @@ export default function (pi: ExtensionAPI) {
     name: "emacs_list_buffers",
     label: "Emacs List Buffers",
     description:
-      "List open Emacs buffers with metadata (name, filepath, modified, major mode, size, visibility). " +
+      "List details of open Emacs buffers. " +
       "Hidden/internal buffers (names starting with space) are excluded.",
     parameters: Type.Object({}),
     async execute(toolCallId, _params, signal) {
@@ -227,8 +229,11 @@ export default function (pi: ExtensionAPI) {
     name: "read",
     label: "Read File/Buffer",
     description:
-      "Read content & state of an Emacs buffer (existing or new). Allows " +
-        "paths (file or dir); byte/line ranges; can optionally move point.",
+      "Read content & state of an Emacs buffer (existing or new) up to a max " +
+        "length (51200 chars). Can open paths (file/dir); can move point; " +
+        "can limit chars/lines read. Builds up state in Emacs, to aid later " +
+        "reads/edits/etc.; unless 'temp' is given."
+    ,
     parameters: Type.Object({
       name: Type.String({
         description:
