@@ -17,7 +17,7 @@ if ! grep -q "pi.registerTool" index.ts; then
     exit 1
 fi
 
-for tool in emacs_eval emacs_list_buffers emacs_buffer_contents emacs_ts_query; do
+for tool in emacs_eval emacs_list_buffers emacs_ts_query; do
     if ! grep -q "name: \"$tool\"" index.ts; then
         echo "not ok - Missing tool: $tool"
         exit 1
@@ -27,8 +27,12 @@ done
 CODE=0
 echo "# Running unit tests..."
 tsx ./unit_test.test.ts || CODE=1
+echo "# Running read tool unit tests..."
+tsx ./read-tool.test.ts || CODE=1
 echo "# Running Emacs integration tests..."
 tsx ./emacs-integration.test.ts || CODE=1
+echo "# Running read tool integration tests..."
+tsx ./read-tool-integration.test.ts || CODE=1
 echo "# Running Pi integration tests..."
 tsx ./pi-integration.test.ts || CODE=1
 exit "$CODE"

@@ -348,69 +348,6 @@ async function runTest(name: string, testFn: (tempDir: string) => Promise<boolea
     }
   );
 
-  // Test: emacs_buffer_contents returns buffer metadata
-  await runTest(
-    "pi calls emacs_buffer_contents and gets content",
-    async (tempDir) => {
-      const fakeResponse =
-        '"{\\"buffer\\":\\"test.py\\",\\"filepath\\":\\"/tmp/test.py\\",\\"content\\":\\"print(42)\\",\\"length\\":9,\\"lineCount\\":1,\\"majorMode\\":\\"python-mode\\",\\"modified\\":false,\\"point\\":1,\\"pointLine\\":1,\\"pointColumn\\":0}"';
-
-      const fakeDir = createFakeEmacsclient(tempDir, {
-        "with-current-buffer": fakeResponse,
-      });
-
-      const llm = createDummyLLM(tempDir, {
-        "show buffer": {
-          text: "Getting buffer contents.",
-          tool: "emacs_buffer_contents",
-          args: { buffer: "test.py" },
-        },
-      });
-
-      const ext = join(__dirname, "index.ts");
-      const pi = startPi([llm, ext], tempDir, {
-        EMACSCLIENT_BINARY: join(fakeDir, "emacsclient"),
-      });
-
-      const events: any[] = [];
-      const rl = createInterface({ input: pi.stdout! });
-      rl.on("line", (line) => {
-        try {
-          events.push(JSON.parse(line));
-        } catch {}
-      });
-
-      try {
-        await new Promise((r) => setTimeout(r, 500));
-        sendCommand(pi, { type: "prompt", message: "show buffer" });
-
-        const toolEnd = await waitForEvent(
-          events,
-          (e) =>
-            e.type === "tool_execution_end" &&
-            e.toolName === "emacs_buffer_contents"
-        );
-
-        await waitForResponse(events);
-
-        const resultText =
-          toolEnd.result?.content?.find((c: any) => c.type === "text")?.text ?? "";
-        const parsed = JSON.parse(resultText);
-        if (parsed.buffer !== "test.py")
-          return `Expected test.py, got ${parsed.buffer}`;
-        if (parsed.content !== "print(42)")
-          return `Expected print(42), got ${parsed.content}`;
-        if (parsed.majorMode !== "python-mode")
-          return `Expected python-mode, got ${parsed.majorMode}`;
-
-        return true;
-      } finally {
-        pi.kill();
-        await new Promise((r) => pi.on("close", r));
-      }
-    }
-  );
-
   // Test: emacs_eval returns result
   await runTest("pi calls emacs_eval and gets result", async (tempDir) => {
     const fakeDir = createFakeEmacsclient(tempDir, {
@@ -540,16 +477,11 @@ process.exit(1);
         args: {},
       },
       "test tool 2": {
-        text: "Testing buffer contents.",
-        tool: "emacs_buffer_contents",
-        args: {},
-      },
-      "test tool 3": {
         text: "Testing eval.",
         tool: "emacs_eval",
         args: { expression: "(+ 1 2)" },
       },
-      "test tool 4": {
+      "test tool 3": {
         text: "Testing tree-sitter query.",
         tool: "emacs_ts_query",
         args: { buffer: "test.py", query: "(identifier) @name" },
@@ -575,7 +507,6 @@ process.exit(1);
       // Test each tool by triggering it
       const expectedTools = [
         "emacs_list_buffers",
-        "emacs_buffer_contents",
         "emacs_eval",
         "emacs_ts_query"
       ];
