@@ -18,6 +18,7 @@ import {
   buildTsQueryElisp,
   buildEvalElisp,
   buildReadElisp,
+  buildWriteElisp,
 } from "./elisp.ts";
 import { emacsEval } from "./emacsclient.ts";
 import type { EmacsclientOptions } from "./emacsclient.ts";
@@ -245,6 +246,97 @@ export default function (pi: ExtensionAPI) {
           temp: params.temp,
         },
         maxLength
+      );
+      const result = await emacsEval(elisp, getOptions(signal));
+
+      if (!result.success) {
+        return {
+          content: [{ type: "text", text: `Error: ${result.error}` }],
+          details: { error: result.error },
+          isError: true,
+        };
+      }
+
+      const data = result.data as Record<string, unknown>;
+      const text = JSON.stringify(data, null, 2);
+
+      return {
+        content: [{ type: "text", text }],
+        details: data,
+      };
+    },
+  });
+
+  // ------------------------------------------------------------------
+  // Tool: write
+  // ------------------------------------------------------------------
+  pi.registerTool({
+    name: "write",
+    label: "Write to File/Buffer",
+    description:
+      "Insert text into Emacs buffer at a specific position. Can create new " +
+        "files/buffers, move point, insert content, and optionally save. " +
+        "Use 'temp' to restore point and close newly opened buffers.",
+    parameters: Type.Object({
+      name: Type.String({
+        description:
+          "Treated as path if contains '/', otherwise a buffer name. " +
+          "Relative paths can use './'. Supports TRAMP paths.",
+      }),
+      insert: Type.String({
+        description: "Text to insert at the specified position.",
+      }),
+      pos: Type.Optional(
+        Type.Number({
+          description:
+            "Position to insert at. Positive counts from start of buffer " +
+              "(1-indexed); negative counts back from end. Conflicts with " +
+              "'line' and 'point'.",
+        })
+      ),
+      line: Type.Optional(
+        Type.Number({
+          description:
+            "Line number to insert at. Positive is from start (1-indexed), " +
+            "negative counts back from end. Conflicts with 'pos' and 'point'.",
+        })
+      ),
+      point: Type.Optional(
+        Type.Boolean({
+          description:
+            "true to insert at point (start of file if newly opened). " +
+              "Default when no 'pos' or 'line' given. Conflicts with those.",
+          default: false,
+        })
+      ),
+      save: Type.Optional(
+        Type.Boolean({
+          description:
+            "true to save buffer to disk after inserting. Only works for " +
+              "file-backed buffers. Creates parent directories if needed.",
+          default: false,
+        })
+      ),
+      temp: Type.Optional(
+        Type.Boolean({
+          description:
+            "true to restore Emacs state afterwards: killing new buffers, " +
+            "restoring point in existing buffers.",
+          default: false,
+        })
+      ),
+    }),
+    async execute(toolCallId, params, signal) {
+      const elisp = buildWriteElisp(
+        params.name,
+        params.insert,
+        {
+          pos: params.pos,
+          line: params.line,
+          point: params.point,
+          save: params.save,
+          temp: params.temp,
+        }
       );
       const result = await emacsEval(elisp, getOptions(signal));
 

@@ -387,3 +387,115 @@ export function buildReadElisp(
           (setf (alist-get "dead" result nil nil 'equal) t))` : ''}
         result))))`
 }
+
+// ---------------------------------------------------------------------------
+// Write tool elisp builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build elisp for the custom 'write' tool.
+ *
+ * This generates an elisp expression that:
+ * - Opens/finds a buffer by path or name
+ * - Optionally moves point to a specific position
+ * - Inserts text at that position
+ * - Optionally saves the buffer
+ * - Optionally restores state (temp mode)
+ * - Returns metadata about the operation
+ */
+export function buildWriteElisp(
+  name: string,
+  insert: string,
+  options: {
+    pos?: number;
+    line?: number;
+    point?: boolean;
+    save?: boolean;
+    temp?: boolean;
+  } = {}
+): string {
+  // Validate ambiguous position parameters
+  const positionParams = [
+    options.pos !== undefined,
+    options.line !== undefined,
+    options.point !== undefined
+  ];
+  const positionParamCount = positionParams.filter(Boolean).length;
+
+  if (positionParamCount > 1) {
+    throw new Error(
+      "Ambiguous position parameters: only one of 'pos', 'line', or 'point' can be specified"
+    );
+  }
+
+  const isPath = name.includes('/');
+  const temp = options.temp ?? false;
+  const save = options.save ?? false;
+
+  // Build the elisp expression with save-excursion wrapper if temp is true
+  const mainBody = `
+    (with-current-buffer buf
+      ;; Move point if requested
+      ${options.pos !== undefined ? `
+      (goto-char (if (< ${options.pos} 0)
+                     (max (point-min) (+ (point-max) ${options.pos + 1}))
+                   ${options.pos}))` : ''}
+      ${options.pos === undefined && options.line !== undefined ? `
+      ;; goto-line equivalent for programmatic use
+      (let ((target-line ${options.line}))
+        (if (< target-line 0)
+            ;; Negative line: go to end and move back
+            (progn
+              (goto-char (point-max))
+              (forward-line target-line))
+          ;; Positive line: go to start and move forward (goto-line equivalent)
+          (progn
+            (goto-char (point-min))
+            (forward-line (1- target-line)))))` : ''}
+      ;; Insert text at current point
+      (insert "${escapeElispString(insert)}")
+      ;; Save buffer if requested
+      ${save ? `
+      (when (buffer-file-name)
+        (save-buffer))` : ''}
+      ;; Build result object
+      (list
+       (cons "name" (buffer-name))
+       (cons "path" (buffer-file-name))
+       (cons "inserted" "${escapeElispString(insert)}")
+       (cons "length" ${insert.length})
+       (cons "point" (list
+                      (cons "pos" (point))
+                      (cons "line" (line-number-at-pos))
+                      (cons "col" (current-column))))
+       (cons "saved" ${save ? 't' : ':json-false'})
+       (cons "new" (if was-new t :json-false))
+       (cons "dead" :json-false)))`;
+
+  return `(json-encode
+  (let* (;; Track whether buffer was newly opened
+         (was-new nil)
+         ;; Determine if name is a path or buffer name
+         (is-path ${isPath ? 't' : 'nil'})
+         ;; Get or create the buffer
+         (buf (if is-path
+                  ;; Path: use find-file or find-buffer-visiting
+                  (or (find-buffer-visiting "${escapeElispString(name)}")
+                      (progn
+                        (setq was-new t)
+                        (find-file-noselect "${escapeElispString(name)}")))
+                ;; Buffer name: get-buffer or create via find-file
+                (or (get-buffer "${escapeElispString(name)}")
+                    (progn
+                      (setq was-new t)
+                      (find-file-noselect "${escapeElispString(name)}")))))
+         ;; Perform the operation and get result
+         (result ${temp ? `(save-excursion${mainBody})` : mainBody}))
+    ;; In temp mode, kill newly created buffers
+    ${temp ? `
+    (when was-new
+      (kill-buffer buf)
+      ;; Update the dead flag in result
+      (setf (alist-get "dead" result nil nil 'equal) t))` : ''}
+    result))`;
+}
