@@ -1,97 +1,227 @@
-# Emacsclient Extension - Implementation Plan
+# Emacsclient Extension for Pi
 
-Issue: #82cd689974fb35cc, Comment 2
-Requirement: Send TreeSitter-based edit commands through emacsclient, to edit
-buffers directly in a structured way.
+A Pi extension that enables direct interaction with a running Emacs session. Instead of editing files on disk, Pi can read and manipulate Emacs buffers in-memory, query buffer state, and perform syntax-aware operations using Emacs's built-in Tree-sitter support.
 
-## Context
+## Features
 
-Currently pi edits files on disk, which conflicts with Emacs buffers. We need to:
-1. Edit the Emacs buffer in-memory instead, by sending ELisp to emacsclient
-2. Our ELisp should utilise Emacs's built-in TreeSitter support for syntax-aware
-   structural edits
-3. Allow querying of current Emacs state, including buffer list and content
-   (scoped to regions).
+- **Direct buffer access**: Read and query Emacs buffers without touching the filesystem
+- **Tree-sitter integration**: Run structural queries and perform syntax-aware edits
+- **State management**: Navigate buffers, move point, and maintain editing context
+- **Emacs Lisp evaluation**: Execute arbitrary elisp in your running Emacs session
 
-## Extension Structure
+## Requirements
 
-Create `extensions/emacsclient/` with this layout:
+- A running Emacs server (Emacs 29+ recommended for Tree-sitter support)
+- `emacsclient` binary in your PATH
 
-```
-extensions/emacsclient/
-├── index.ts               # Tool registration and plumbing
-├── query.ts               # TreeSitter query/edit functionality
-├── test.sh                # Entry point for unit tests
-├── query-test.mjs         # Unit tests of pure parts of JS functionality
-├── emacs-integration.mjs  # Test w/ real emacsclient socket; mock Pi & LLM
-└── pi-integration.mjs     # Test w/ real Pi, mock LLM & Emacs
+To start an Emacs server:
+```bash
+# Start Emacs as a daemon
+emacs --daemon
+
+# Or from within Emacs
+M-x server-start
 ```
 
-## Three Tools to Register
+## Installation
 
-### Tool 1: emacs_ts_query
+1. Copy this directory to your pi extensions folder:
+   ```bash
+   cp -r extensions/emacsclient ~/.config/pi/extensions/
+   ```
 
-Run a tree-sitter query against a buffer (restricted to region, if active), and
-execute given elisp code for each match.
+2. Enable the extension in your pi configuration (if not auto-loaded)
+
+## Configuration
+
+By default, the extension connects to your default Emacs server socket. To use a custom socket:
+
+```bash
+export EMACS_SOCKET_NAME=/path/to/socket
+```
+
+For testing, you can override the emacsclient binary:
+```bash
+export EMACSCLIENT_BINARY=/custom/path/to/emacsclient
+```
+
+## Tools
+
+### `read`
+Read the content and metadata of a file or Emacs buffer.
 
 **Parameters:**
-- `buffer` (required, string) - buffer name or file path
-- `lang` (optional, string) - hint for tree-sitter language (js, python, etc.)
-- `query` (required, tree-sitter query string) - Tree-sitter query with captures
-  (e.g., `(function_definition) @func`). Quasiquoted, so Emacs Lisp can be
-  spliced in (e.g. `,(treesit-node-at (point))`).
-- `action` (optional, string of elisp code) - Expression to evaluate for each
-  match. Result becomes an element of the returned list. Default, when not
-  provided, will return the matched node as-is.
+- `name` (required): File path (if contains `/`) or buffer name
+- `pos` (optional): Character position to start reading (1-indexed, or negative for relative to point)
+- `line` (optional): Line number to start reading
+- `col` (optional): Column number (used with `line`)
+- `length` (optional): Maximum characters to read (default: 51200)
+- `lines` (optional): Maximum lines to read
+- `temp` (optional): If true, don't modify Emacs state (default: false)
 
-**In-scope values for `action`:**
-- `@capture-name` - Each capture from the query becomes a variable holding the
-  node
-- `node` - The matched node (if single unnamed capture)
-- `match` - Full match data structure
+**Returns:** Buffer content, metadata (major mode, size, point position, etc.)
 
-**Implementation:**
-Sends ELisp to Emacs which will:
-- Check if there's a buffer with the given name, if not then check if there's an
-existing buffer for that path, and if not then try to open a buffer for that
-path (failing if it doesn't exist).
-- If the previous step gave us a buffer, open a `with-current-buffer` block for
-  it...
-- Run the given query, using the language hint (if any)...
-- Loop/map over the matches (if any), executing `action` for each, serialising
-  its results as strings, and accumulating them in a list.
+**Example:**
+```typescript
+// Read first 1000 characters of a file (also moves point)
+read({ name: "./src/main.ts", pos: 1, length: 1000 })
+// Read subsequent 1000 characters from that file (starts at point)
+read({ name: "./src/main.ts", length: 1000 })
 
-**Returns:** { results: array of `action` results (one string per match), errors: error messages (if any) }
+// Read 50 lines starting from line 100
+read({ name: "main.ts", line: 100, lines: 50 })
 
-### Tool 2: emacs_list_buffers
+// Peek at a file without affecting Emacs state
+read({ name: "./config.json", temp: true })
+```
 
-List available buffers.
+### `emacs_eval`
+Evaluate an Emacs Lisp expression and return the result.
 
-Returns: { buffers: [{name, filepath, modified, majorMode, size, visible}, ...] }
+**Parameters:**
+- `expression` (required): Elisp code to evaluate
 
-## Implementation Steps
+**Returns:** The result of evaluating the expression
 
-*ALL* testing must go through `nix-build`! We do not have `node` etc. installed;
-and we rely on Nix's sandboxing to avoid messing up our system!
+**Example:**
+```typescript
+// Get current buffer name
+emacs_eval({ expression: "(buffer-name)" })
 
-### Step 1: Create plumbing/boilerplate (index.ts, test.sh, etc.)
+// List all buffers
+emacs_eval({ expression: "(mapcar #'buffer-name (buffer-list))" })
 
-### Step 2: Write unit tests (TDD style: RED)
+// Get value of a variable
+emacs_eval({ expression: "default-directory" })
+```
 
-Write tests for pure JS functions, aseerting (a) what should exist and (b) how
-those things should behave. These tests won't interact with LLMs, Emacs or Pi.
+### `emacs_list_buffers`
+List all open Emacs buffers with metadata.
 
-### Step 3: Implement enough to make unit tests pass (TDD style: GREEN)
+**Parameters:** None
 
-### Step 4: Write integration tests
+**Returns:** Array of buffer information:
+- `name`: Buffer name
+- `filepath`: Associated file path (if any)
+- `modified`: Whether buffer has unsaved changes
+- `majorMode`: Major mode (e.g., "python-mode")
+- `size`: Buffer size in characters
+- `visible`: Whether buffer is currently visible
 
-**Emacs tests:** Write a bunch of tests that check our Emacs integration works,
-e.g. Emacs will accept our generated elisp; we can parse the results Emacs
-gives back; query the resulting state of Emacs by sending it elisp; etc. Nix
-environment should spin up an Emacs instance with a server listening on a socket
-that the tests will use (e.g. use an env var).
+**Example:**
+```typescript
+emacs_list_buffers({})
+```
 
-**Pi tests:** Write a bunch of tests that check our extension works with Pi.
-Mock the Emacs and LLM interactions by giving canned responses.
+### `emacs_ts_query`
+Run a Tree-sitter query against an Emacs buffer and optionally execute elisp for each match.
 
-### Step 5: Implement Emacs and Pi integrations until tests pass
+**Parameters:**
+- `buffer` (required): Buffer name or file path
+- `query` (required): Tree-sitter query string with `@captures`
+- `lang` (optional): Language hint (e.g., "python", "javascript")
+- `action` (optional): Elisp expression to evaluate for each match
+
+**Returns:** Array of results (one per match)
+
+**Examples:**
+```typescript
+// Find all function definitions
+emacs_ts_query({
+  buffer: "main.py",
+  query: "(function_definition name: (identifier) @name)",
+  lang: "python"
+})
+
+// Get function names and their starting positions
+emacs_ts_query({
+  buffer: "main.py",
+  query: "(function_definition name: (identifier) @name)",
+  action: "(cons (treesit-node-text name) (treesit-node-start name))"
+})
+
+// Find all import statements
+emacs_ts_query({
+  buffer: "app.ts",
+  query: "(import_statement) @import",
+  lang: "typescript"
+})
+```
+
+## Use Cases
+
+### Avoiding Buffer Conflicts
+Reading Emacs buffers ensures unsaved changes are seen; editing Emacs buffers avoids conflicting changes.
+
+### Syntax-Aware Refactoring
+Use Tree-sitter queries to find and modify code structures precisely:
+- Rename functions/classes
+- Add parameters to function signatures
+- Extract code to functions
+- Reorganize imports
+
+### Context-Aware Assistance
+Pi can query your current Emacs state to provide more relevant help:
+- See what files you have open
+- Know where point is positioned
+- Understand the major mode and language context
+
+### Interactive Development
+Combine reading and evaluation for complex workflows:
+1. Read a section of code
+2. Analyze it
+3. Execute elisp to perform edits
+4. Query the result to verify changes
+
+## Development
+
+### Running Tests
+
+The extension includes comprehensive tests. It is recommended to use `nix-build`, via the
+`default.nix` file in this repo's root:
+
+```bash
+nix-build ../.. -A extensions.emacsclient
+```
+
+Test suites:
+- **Unit tests** (`unit_test.test.ts`): Test pure functions
+- **Emacs integration tests** (`emacs-integration.test.ts`): Test emacsclient interaction
+- **Pi integration tests** (`pi-integration.test.ts`): Test extension API integration
+- **Read tool tests** (`read-tool.test.ts`, `read-tool-integration.test.ts`): Test the read tool
+
+### Architecture
+
+- `index.ts`: Tool registration and Pi API integration
+- `emacsclient.ts`: Low-level emacsclient invocation
+- `elisp.ts`: Elisp code generation and output parsing
+- `*.test.ts`: Test suites
+
+## Troubleshooting
+
+### "emacsclient: can't find socket"
+Make sure your Emacs server is running:
+```elisp
+M-x server-start
+```
+
+Or start Emacs as a daemon:
+```bash
+emacs --daemon
+```
+
+### "Wrong type argument: treesit-node-p"
+Your buffer needs a Tree-sitter parser. Emacs 29+ with Tree-sitter grammars installed is required. Check with:
+```elisp
+M-: (treesit-available-p)
+```
+
+### Timeout errors
+Increase the timeout for long-running operations by setting `EMACSCLIENT_TIMEOUT`:
+```bash
+export EMACSCLIENT_TIMEOUT=30000  # 30 seconds
+```
+
+## License
+
+Public domain
