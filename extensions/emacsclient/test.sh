@@ -29,6 +29,8 @@ echo "# Running unit tests..."
 tsx ./unit_test.test.ts || CODE=1
 echo "# Running read tool unit tests..."
 tsx ./read-tool.test.ts || CODE=1
+echo "# Running write tool unit tests..."
+tsx ./write-tool.test.ts || CODE=1
 echo "# Running Emacs integration tests..."
 tsx ./emacs-integration.test.ts || CODE=1
 echo "# Running read tool integration tests..."
