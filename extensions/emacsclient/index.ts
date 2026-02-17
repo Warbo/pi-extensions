@@ -2,6 +2,7 @@
  * Emacsclient extension for pi.
  *
  * Provides tools for interacting with a running Emacs session:
+ *   - read: Read files/buffers with comprehensive metadata and navigation
  *   - emacs_eval: Evaluate arbitrary elisp
  *   - emacs_buffer_contents: Query buffer content and metadata
  *   - emacs_list_buffers: List open buffers
@@ -18,6 +19,7 @@ import {
   buildBufferContentsElisp,
   buildTsQueryElisp,
   buildEvalElisp,
+  buildReadElisp,
 } from "./elisp.ts";
 import { emacsEval } from "./emacsclient.ts";
 import type { EmacsclientOptions } from "./emacsclient.ts";
@@ -214,6 +216,100 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text }],
         details: { results },
+      };
+    },
+  });
+
+  // ------------------------------------------------------------------
+  // Tool: read
+  // ------------------------------------------------------------------
+  pi.registerTool({
+    name: "read",
+    label: "Read File/Buffer",
+    description:
+      "Read content & state of an Emacs buffer (existing or new). Allows " +
+        "paths (file or dir); byte/line ranges; can optionally move point.",
+    parameters: Type.Object({
+      name: Type.String({
+        description:
+          "Treated as a path if it contains a '/' (relative can use './'), " +
+            "otherwise as a buffer name. Supports TRAMP paths.",
+      }),
+      pos: Type.Optional(
+        Type.Number({
+          description:
+            "Position to begin reading buffer. +ve is absolute (1-indexed)," +
+              "-ve is backwards from point. Omit to use point (or use 0). " +
+              "Point is moved to this position, unless 'temp' is true.",
+        })
+      ),
+      line: Type.Optional(
+        Type.Number({
+          description:
+            "Same as 'pos' but for lines. If both are given, 'pos' is used.",
+        })
+      ),
+      col: Type.Optional(
+        Type.Number({
+          description:
+            "Optional column number to begin reading buffer, if using 'line'.",
+        })
+      ),
+      length: Type.Optional(
+        Type.Number({
+          description:
+            "Number of characters to read from buffer. Result may be " +
+              "shorter due to end-of-buffer, truncation to max length, or " +
+              "due to 'lines'. Defaults to max length (51200).",
+        })
+      ),
+      lines: Type.Optional(
+        Type.Number({
+          description:
+            "Number of lines to read. Result may be shorter due to " +
+              "end-of-buffer, or truncation to 'length' chars.",
+        })
+      ),
+      temp: Type.Optional(
+        Type.Boolean({
+          description:
+            "Leaves Emacs state unchanged: new buffers will be killed, " +
+              "existing buffers will have their point position restored. " +
+            "Lets us read files without affecting Emacs state. Default: false.",
+          default: false,
+        })
+      ),
+    }),
+    async execute(toolCallId, params, signal) {
+      const maxLength = 51200; // Default max length
+      const elisp = buildReadElisp(
+        params.name,
+        {
+          pos: params.pos,
+          line: params.line,
+          col: params.col,
+          length: params.length,
+          lines: params.lines,
+          temp: params.temp,
+        },
+        maxLength
+      );
+      const result = await emacsEval(elisp, getOptions(signal));
+
+      if (!result.success) {
+        return {
+          content: [{ type: "text", text: `Error: ${result.error}` }],
+          details: { error: result.error },
+          isError: true,
+        };
+      }
+
+      const data = result.data as Record<string, unknown>;
+      const text = JSON.stringify(data, null, 2);
+
+      return {
+        content: [{ type: "text", text }],
+        details: data,
       };
     },
   });
