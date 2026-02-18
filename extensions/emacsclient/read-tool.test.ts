@@ -195,6 +195,22 @@ test("buildReadElisp - temp false is default", () => {
   );
 });
 
+test("buildReadElisp - temp false does not produce 'false' symbol in elisp", () => {
+  const result = buildReadElisp("test.txt", { temp: false });
+  assert(!result.includes(" false)"), "Should not contain elisp 'false' symbol");
+  assert(!result.includes("(not false)"), "Should not contain '(not false)'");
+  // Should use proper elisp nil instead
+  assertContains(result, "nil", "Should contain nil for false boolean");
+});
+
+test("buildReadElisp - temp true does not produce 'true' symbol in elisp", () => {
+  const result = buildReadElisp("test.txt", { temp: true });
+  assert(!result.includes(" true)"), "Should not contain elisp 'true' symbol");
+  assert(!result.includes("(not true)"), "Should not contain '(not true)'");
+  // Should use proper elisp t instead
+  assertContains(result, "(not t)", "Should use 't' for true boolean");
+});
+
 // ---------------------------------------------------------------------------
 // buildReadElisp - elisp structure
 // ---------------------------------------------------------------------------
@@ -207,11 +223,29 @@ test("buildReadElisp - returns valid elisp", () => {
 
 test("buildReadElisp - balanced parentheses", () => {
   const result = buildReadElisp("test.txt", { pos: 1, length: 1000, temp: true });
+  // Count parens, but skip escaped ones and ones in strings
   let depth = 0;
-  for (const ch of result) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    assert(depth >= 0, "Parentheses went negative");
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < result.length; i++) {
+    const ch = result[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (ch === "(") depth++;
+      if (ch === ")") depth--;
+      assert(depth >= 0, "Parentheses went negative at position " + i);
+    }
   }
   assertEqual(depth, 0, "Parentheses not balanced");
 });
