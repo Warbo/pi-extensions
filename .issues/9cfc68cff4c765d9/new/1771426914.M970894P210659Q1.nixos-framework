@@ -1,0 +1,87 @@
+From: Chris Warburton
+Date: Wed, 18 Feb 2026 12:51:30 +0000
+State: new
+Subject: emacsclient: add "span" functionality to 'read'
+Message-Id: <9cfc68cff4c765d9-0-artemis@nixos-framework>
+
+## Producing spans ##
+
+If the 'read' tool is called without 'temp: true', we want to allow its result
+to include a "spans" field; for example:
+
+```
+  "spans": {
+    "fn89f4": "'serialise' def",
+    "doc0ee2": "'load' doc",
+    "fn7ac0": "'load' def",
+    "val4421": "'CUSTOMER_DATAB..._URL' def"
+    "try95e7": "image downloader"
+  }
+```
+
+These "spans" will be provided by the Emacs Lisp code. The number of them, and
+their contents, will be entirely arbitrary.
+
+### ELisp code ###
+
+We need to extend the Emacs Lisp for 'read', so that it attempts to calculate
+spans. The actual calculation logic will be provided elsewhere (e.g. the user's
+Emacs config), via the following:
+
+ - warbo-span-calculators
+   - If defined, this variable should contain a list of functions
+   - If not defined, an empty list will be used as fallback
+   - Each of those functions takes a buffer as argument and returns an alist
+   - The entries in those returned alists should have the form
+     (myId . ((start . 123) (end . 456) (value . myValue)))
+
+ - warbo-span-selector
+   - If defined, this function will accept an alist of entries like those
+     returned by the warbo-span-calculators functions
+   - Its job is to return a subset of those entries
+   - If this function is not defined, as a fallback we should choose the first 3
+
+All the Emacs Lisp for 'read' has to do, is call each of the functions in
+warbo-span-calculators (or nil, if it's not defined), giving them the buffer
+we're reading as argument, and appending all their resulting lists together.
+
+Then, that resulting list should be passed to warbo-span-selector (if not
+defined, just take the first three entries as a fallback).
+
+The result of that "selection" should then become a JSON object for the 'spans'
+field, whose keys are the IDs of the alist entries; and whose values are those
+associated to the 'value' key in their associated entries.
+
+For example, the 'spans' JSON above could have come from selected entries like
+these:
+
+```
+(
+  (fn89f4  . ((start . 1)   (end . 20 ) (value . "'serialise' def")))
+  (doc0ee2 . ((start . 100) (end . 125) (value . "'load' doc")))
+  (fn7ac0  . ((start . 234) (end . 280) (value . "'load' def")))
+  (val4421 . ((start . 890) (end . 900) (value . "'CUSTOMER_DATAB..._URL' def")))
+  (try95e7 . ((start . 945) (end . 967) (value . "image downloader")))
+)
+```
+
+### JS code ###
+
+The JS handler should pass along the 'spans' field to the LLM if it's present in
+the result from Emacs, EXCEPT if that spans object is empty; in that case we
+should leave it out of the message, to save tokens.
+
+## Using spans ##
+
+The 'read' tool should accept an optional 'span' argument, containing a string
+for a span ID (e.g. "fn89f4" above). If given, that should be passed along via
+the Emacs Lisp code, which should then do the following:
+
+ - Call the warbo-span-calculators (similar to above; defaulting to nil)
+ - Looking through ALL of the returned entries (NOT filtered/selected) for any
+   which has the given ID
+   - If found, temporarily narrow the buffer to that entry's 'start' and 'end'
+     positions for the duration of the 'read', then unnarrow (this is
+     independent of 'temp'!)
+   - If not found, carry on anyway, but include a 'warning' in the result like
+     "Span 'fn89f4' not found (maybe its content changed?), used whole buffer."
