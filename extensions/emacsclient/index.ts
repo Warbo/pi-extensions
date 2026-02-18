@@ -343,8 +343,8 @@ export default function (pi: ExtensionAPI) {
     label: "Write to File/Buffer",
     description:
       "Insert text into Emacs buffer at a specific position. Can create new " +
-        "files/buffers, move point, insert content, and optionally save. " +
-        "Use 'temp' to restore point and close newly opened buffers.",
+        "files/buffers, move point, insert content, and save. Old content " +
+        "remains, unless 'replace' is given!",
     parameters: Type.Object({
       name: Type.String({
         description:
@@ -359,14 +359,14 @@ export default function (pi: ExtensionAPI) {
           description:
             "Position to insert at. Positive counts from start of buffer " +
               "(1-indexed); negative counts back from end. Conflicts with " +
-              "'line' and 'point'.",
+              "'line', 'point', 'replace'.",
         })
       ),
       line: Type.Optional(
         Type.Number({
           description:
-            "Line number to insert at. Positive is from start (1-indexed), " +
-            "negative counts back from end. Conflicts with 'pos' and 'point'.",
+            "Line number to insert at. +ve is from start (1-indexed), -ve " +
+              "counts back from end. Conflicts with 'pos', 'point', 'replace'.",
         })
       ),
       point: Type.Optional(
@@ -377,12 +377,19 @@ export default function (pi: ExtensionAPI) {
           default: false,
         })
       ),
+      replace: Type.Optional(
+        Type.Boolean({
+          description:
+            "When true, completely clears the contents of buffer before " +
+              "inserting. This makes 'point', 'pos' and 'line' meaningless."
+        })
+      ),
       save: Type.Optional(
         Type.Boolean({
           description:
-            "true to save buffer to disk after inserting. Only works for " +
-              "file-backed buffers. Creates parent directories if needed.",
-          default: false,
+            "If buffer is backed by a file, save it to disk after inserting. " +
+              "Creates parent directories if needed. Default: true.",
+          default: true,
         })
       ),
       temp: Type.Optional(
@@ -402,6 +409,7 @@ export default function (pi: ExtensionAPI) {
           pos: params.pos,
           line: params.line,
           point: params.point,
+          replace: params.replace,
           save: params.save,
           temp: params.temp,
         }

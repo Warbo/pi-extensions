@@ -542,6 +542,7 @@ export function buildWriteElisp(
     point?: boolean;
     save?: boolean;
     temp?: boolean;
+    replace?: boolean;
   } = {}
 ): string {
   // Validate ambiguous position parameters
@@ -558,6 +559,13 @@ export function buildWriteElisp(
     );
   }
 
+  // Validate replace parameter conflicts
+  if (options.replace && positionParamCount > 0) {
+    throw new Error(
+      "Conflicting parameters: 'replace' makes 'pos', 'line', and 'point' meaningless"
+    );
+  }
+
   const isPath = name.includes('/');
   const temp = options.temp ?? false;
   const save = options.save ?? false;
@@ -565,6 +573,10 @@ export function buildWriteElisp(
   // Build the elisp expression with save-excursion wrapper if temp is true
   const mainBody = `
     (with-current-buffer buf
+      ;; Clear buffer if replace is requested
+      ${options.replace ? `
+      (delete-region (point-min) (point-max))
+      (goto-char (point-min))` : ''}
       ;; Move point if requested
       ${options.pos !== undefined ? `
       (goto-char (if (< ${options.pos} 0)
