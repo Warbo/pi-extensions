@@ -326,10 +326,42 @@ export default function (pi: ExtensionAPI) {
       // Use cached metadata to reduce token usage
 
       const data = getCachedMetadata(params.name, fullData);
-      const text = JSON.stringify(data, null, 2);
+
+      // Extract the content pieces
+      const gotContent = (data as any).got?.content || '';
+      const regionContent = (data as any).region?.content || '';
+
+      // Create a copy of data without the content fields
+      const metaData = JSON.parse(JSON.stringify(data));
+      if (metaData.got) {
+        delete metaData.got.content;
+      }
+      if (metaData.region) {
+        delete metaData.region.content;
+      }
+
+      // Build the content array
+      const contentArray: { type: "text"; text: string }[] = [];
+
+      // First message: raw got.content
+      if (gotContent) {
+        contentArray.push({ type: "text", text: gotContent });
+      }
+
+      // Second message: meta JSON
+      let metaMessage = "meta: " + JSON.stringify(metaData, null, 2);
+      if (regionContent) {
+        metaMessage += "\nregion:";
+      }
+      contentArray.push({ type: "text", text: metaMessage });
+
+      // Third message (if region.content exists): region content
+      if (regionContent) {
+        contentArray.push({ type: "text", text: regionContent });
+      }
 
       return {
-        content: [{ type: "text", text }],
+        content: contentArray,
         details: data,
       };
     },
