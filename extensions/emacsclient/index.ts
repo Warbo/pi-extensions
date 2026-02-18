@@ -34,7 +34,7 @@ export default function (pi: ExtensionAPI) {
     fullData: Record<string, unknown>
   ): Record<string, unknown> {
     const cached = metadataCache.get(name);
-    
+
     // If no cache, return full data and cache it
     if (!cached) {
       metadataCache.set(name, { ...fullData });
@@ -57,13 +57,13 @@ export default function (pi: ExtensionAPI) {
     for (const key of Object.keys(fullData)) {
       // Skip content fields (already handled above)
       if (key === 'got' || key === 'content') continue;
-      
+
       const currentValue = fullData[key];
       const cachedValue = cached[key];
-      
+
       // Deep comparison for nested objects (like point, region)
       const isDifferent = JSON.stringify(currentValue) !== JSON.stringify(cachedValue);
-      
+
       if (isDifferent) {
         result[key] = currentValue;
         hasChanges = true;
@@ -237,8 +237,7 @@ export default function (pi: ExtensionAPI) {
       "Read content & state of an Emacs buffer (existing or new) up to a max " +
         "length (51200 chars). Can open paths (file/dir); can move point; " +
         "can limit chars/lines read. Builds up state in Emacs, to aid later " +
-        "reads/edits/etc.; unless 'temp' is given." +
-    ,
+        "reads/edits/etc.; unless 'temp' is given.",
     parameters: Type.Object({
       name: Type.String({
         description:
@@ -316,8 +315,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       const fullData = result.data as Record<string, unknown>;
-      
+
       // Use cached metadata to reduce token usage
+
       const data = getCachedMetadata(params.name, fullData);
       const text = JSON.stringify(data, null, 2);
 
@@ -410,8 +410,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       const fullData = result.data as Record<string, unknown>;
-      
+
       // Use cached metadata to reduce token usage
+
       const data = getCachedMetadata(params.name, fullData);
       const text = JSON.stringify(data, null, 2);
 
