@@ -664,7 +664,7 @@ function stopEmacs() {
     assert("name" in buf, "Should have name");
     assert("majorMode" in buf, "Should have majorMode");
     assert("size" in buf, "Should have size");
-    assert("modified" in buf, "Should have modified");
+    assert("unsaved" in buf, "Should have unsaved");
     assert("visible" in buf, "Should have visible");
     assert("filepath" in buf, "Should have filepath");
   });

@@ -117,7 +117,7 @@ test("buildListBuffersElisp - includes expected fields", () => {
   for (const field of [
     "name",
     "filepath",
-    "modified",
+    "unsaved",
     "majorMode",
     "size",
     "visible",

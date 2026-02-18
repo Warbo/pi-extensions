@@ -224,7 +224,7 @@ test("buildReadElisp - uses json-encode", () => {
 test("buildReadElisp - includes all required fields", () => {
   const result = buildReadElisp("test.txt");
   const requiredFields = [
-    "name", "path", "exists", "changed", "size", "lines", "mode",
+    "name", "path", "exists", "unsaved", "outdated", "size", "lines", "mode",
     "eglot", "ts", "tramp", "new", "dead", "process", "point", "region", "got"
   ];
 
