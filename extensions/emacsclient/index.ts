@@ -236,7 +236,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Read content & state of an Emacs buffer (existing or new) up to a max " +
         "length (51200 chars). Can open paths (file/dir); can move point; " +
-        "can limit chars/lines read. Builds up state in Emacs, to aid later " +
+        "can limit to chars/lines/span. Builds up state in Emacs for later " +
         "reads/edits/etc.; unless 'temp' is given.",
     parameters: Type.Object({
       name: Type.String({
@@ -244,12 +244,18 @@ export default function (pi: ExtensionAPI) {
           "Treated as a path if it contains a '/' (relative can use './'), " +
             "otherwise as a buffer name. Supports TRAMP paths.",
       }),
+      span: Type.Optional(
+        Type.String({
+          description:
+            "Narrow to a span ID (result of a previous read)."
+        })
+      ),
       pos: Type.Optional(
         Type.Number({
           description:
-            "Position to begin reading buffer. +ve is absolute (1-indexed)," +
-              "-ve is backwards from point. Omit to use point (or use 0). " +
-              "Point is moved to this position, unless 'temp' is true.",
+            "Position to begin reading buffer/span. +ve counts from start " +
+              "(1-indexed); -ve counts backwards from point. Default is 0, " +
+              "which uses point. Point moves to this position, unless 'temp'.",
         })
       ),
       line: Type.Optional(
@@ -268,9 +274,9 @@ export default function (pi: ExtensionAPI) {
         Type.Number({
           description:
             "Number of characters to read from buffer. Result may be " +
-              "shorter due to end-of-buffer, truncation to max length, or " +
-              "due to 'lines'. Default is max length (51200). " +
-              "Hint: Use 0 when only querying buffer state or adjusting point.",
+              "shorter due to end-of-buffer/span, truncation to max length, " +
+              "or due to 'lines'. Default is max length (51200). " +
+              "Hint: 0 saves tokens if we only want metadata or to move point.",
         })
       ),
       lines: Type.Optional(
