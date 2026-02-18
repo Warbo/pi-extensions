@@ -24,6 +24,63 @@ import { emacsEval } from "./emacsclient.ts";
 import type { EmacsclientOptions } from "./emacsclient.ts";
 
 export default function (pi: ExtensionAPI) {
+  // Cache for buffer metadata to reduce token usage
+  // Key: buffer name or path, Value: last known metadata
+  const metadataCache = new Map<string, Record<string, unknown>>();
+
+  // Helper to filter metadata, returning only changed fields
+  function getCachedMetadata(
+    name: string,
+    fullData: Record<string, unknown>
+  ): Record<string, unknown> {
+    const cached = metadataCache.get(name);
+    
+    // If no cache, return full data and cache it
+    if (!cached) {
+      metadataCache.set(name, { ...fullData });
+      return fullData;
+    }
+
+    // Build result with only changed metadata
+    const result: Record<string, unknown> = {};
+    let hasChanges = false;
+
+    // Always include content-related fields
+    if ('got' in fullData) {
+      result.got = fullData.got;
+    }
+    if ('content' in fullData) {
+      result.content = fullData.content;
+    }
+
+    // Compare metadata fields and include only changes
+    for (const key of Object.keys(fullData)) {
+      // Skip content fields (already handled above)
+      if (key === 'got' || key === 'content') continue;
+      
+      const currentValue = fullData[key];
+      const cachedValue = cached[key];
+      
+      // Deep comparison for nested objects (like point, region)
+      const isDifferent = JSON.stringify(currentValue) !== JSON.stringify(cachedValue);
+      
+      if (isDifferent) {
+        result[key] = currentValue;
+        hasChanges = true;
+      }
+    }
+
+    // Update cache with current state
+    metadataCache.set(name, { ...fullData });
+
+    // If only content changed, indicate metadata is unchanged
+    if (!hasChanges && !('got' in result) && !('content' in result)) {
+      result._cached = true;
+    }
+
+    return result;
+  }
+
   // Build shared emacsclient options using pi.exec
   function getOptions(signal?: AbortSignal): EmacsclientOptions {
     return {
@@ -180,7 +237,7 @@ export default function (pi: ExtensionAPI) {
       "Read content & state of an Emacs buffer (existing or new) up to a max " +
         "length (51200 chars). Can open paths (file/dir); can move point; " +
         "can limit chars/lines read. Builds up state in Emacs, to aid later " +
-        "reads/edits/etc.; unless 'temp' is given."
+        "reads/edits/etc.; unless 'temp' is given." +
     ,
     parameters: Type.Object({
       name: Type.String({
@@ -213,7 +270,8 @@ export default function (pi: ExtensionAPI) {
           description:
             "Number of characters to read from buffer. Result may be " +
               "shorter due to end-of-buffer, truncation to max length, or " +
-              "due to 'lines'. Defaults to max length (51200).",
+              "due to 'lines'. Default is max length (51200). " +
+              "Hint: Use 0 when only querying buffer state or adjusting point.",
         })
       ),
       lines: Type.Optional(
@@ -257,7 +315,10 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      const data = result.data as Record<string, unknown>;
+      const fullData = result.data as Record<string, unknown>;
+      
+      // Use cached metadata to reduce token usage
+      const data = getCachedMetadata(params.name, fullData);
       const text = JSON.stringify(data, null, 2);
 
       return {
@@ -348,7 +409,10 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      const data = result.data as Record<string, unknown>;
+      const fullData = result.data as Record<string, unknown>;
+      
+      // Use cached metadata to reduce token usage
+      const data = getCachedMetadata(params.name, fullData);
       const text = JSON.stringify(data, null, 2);
 
       return {
