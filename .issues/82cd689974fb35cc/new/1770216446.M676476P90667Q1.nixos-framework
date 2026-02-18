@@ -1,8 +1,9 @@
 From: Chris Warburton
 Date: Wed, 04 Feb 2026 14:47:26 +0000
-State: new
+State: resolved
 Subject: Create emacsclient extension for pi
 Message-Id: <82cd689974fb35cc-0-artemis@nixos-framework>
+resolution: fixed
 
 ## Context
 

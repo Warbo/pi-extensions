@@ -1,0 +1,14 @@
+From: Chris Warburton
+Date: Tue, 17 Feb 2026 19:39:26 +0000
+State: resolved
+Subject: emacsclient: cache buffer metadata
+Message-Id: <8415e6108525c3f5-0-artemis@nixos-framework>
+resolution: fixed
+
+Our emacsclient tools like 'read' return a lot of metadata to the LLM, which
+wastes tokens. Instead, we can keep a cache (within the JS side), and compare
+the result we get from Emacs against what we have cached: things which are
+unchanged can be left out of the response we give to the LLM.
+
+That makes it much cheaper to do repeated operations on the same buffer; like
+collaborative editing.
