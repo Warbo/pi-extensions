@@ -601,6 +601,159 @@ test("read - got object has all required fields", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Span functionality tests
+// ---------------------------------------------------------------------------
+
+test("read - returns spans when warbo-span-calculators is defined", () => {
+  // Set up a simple span calculator
+  const setupElisp = `
+    (setq warbo-span-calculators
+      (list (lambda (buf)
+              (with-current-buffer buf
+                (list
+                  (cons 'test1 '((start . 1) (end . 5) (value . "test span 1")))
+                  (cons 'test2 '((start . 6) (end . 10) (value . "test span 2"))))))))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(testFile, { pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  assert(result.spans !== undefined, "Should have spans field");
+  assert(typeof result.spans === "object", "spans should be an object");
+});
+
+test("read - uses warbo-span-selector when defined", () => {
+  // Set up calculators and custom selector
+  const setupElisp = `
+    (progn
+      (setq warbo-span-calculators
+        (list (lambda (buf)
+                (with-current-buffer buf
+                  (list
+                    (cons 'span1 '((start . 1) (end . 5) (value . "span 1")))
+                    (cons 'span2 '((start . 6) (end . 10) (value . "span 2")))
+                    (cons 'span3 '((start . 11) (end . 15) (value . "span 3")))
+                    (cons 'span4 '((start . 16) (end . 20) (value . "span 4"))))))))
+      (setq warbo-span-selector
+        (lambda (spans) (seq-take spans 2))))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(testFile, { pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  const spanCount = Object.keys(result.spans || {}).length;
+  assertEqual(spanCount, 2, "Should have exactly 2 spans (from custom selector)");
+});
+
+test("read - default selector takes first 3 spans", () => {
+  // Set up calculators without custom selector
+  const setupElisp = `
+    (progn
+      (makunbound 'warbo-span-selector)
+      (setq warbo-span-calculators
+        (list (lambda (buf)
+                (with-current-buffer buf
+                  (list
+                    (cons 'span1 '((start . 1) (end . 5) (value . "span 1")))
+                    (cons 'span2 '((start . 6) (end . 10) (value . "span 2")))
+                    (cons 'span3 '((start . 11) (end . 15) (value . "span 3")))
+                    (cons 'span4 '((start . 16) (end . 20) (value . "span 4")))
+                    (cons 'span5 '((start . 21) (end . 25) (value . "span 5")))))))))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(testFile, { pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  const spanCount = Object.keys(result.spans || {}).length;
+  assertEqual(spanCount, 3, "Should have exactly 3 spans (default selector)");
+});
+
+test("read - span parameter narrows to specified span", () => {
+  // Set up a file with known content and span
+  const spanTestFile = join(tempDir, "span-test.txt");
+  writeFileSync(spanTestFile, "AAAAAABBBBBBBCCCCCC");
+
+  const setupElisp = `
+    (setq warbo-span-calculators
+      (list (lambda (buf)
+              (with-current-buffer buf
+                (list
+                  (cons 'spanA '((start . 1) (end . 7) (value . "region A")))
+                  (cons 'spanB '((start . 7) (end . 14) (value . "region B")))
+                  (cons 'spanC '((start . 14) (end . 20) (value . "region C"))))))))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(spanTestFile, { span: "spanB", pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  assertContains(result.got.content, "BBBBBBB", "Should only read content from spanB");
+  assert(!result.got.content.includes("AAAAAAA"), "Should not include content from spanA");
+  assert(!result.got.content.includes("CCCCCC"), "Should not include content from spanC");
+});
+
+test("read - span not found returns warning", () => {
+  const setupElisp = `
+    (setq warbo-span-calculators
+      (list (lambda (buf)
+              (with-current-buffer buf
+                (list
+                  (cons 'span1 '((start . 1) (end . 5) (value . "span 1"))))))))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(testFile, { span: "nonexistent", pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  assert(result.warning !== undefined, "Should have warning field");
+  assertContains(result.warning, "not found", "Warning should mention span not found");
+  assertContains(result.warning, "nonexistent", "Warning should mention the span ID");
+});
+
+test("read - temp mode does not include spans", () => {
+  const setupElisp = `
+    (setq warbo-span-calculators
+      (list (lambda (buf)
+              (with-current-buffer buf
+                (list
+                  (cons 'test1 '((start . 1) (end . 5) (value . "test span 1"))))))))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(testFile, { pos: 1, length: 100, temp: true });
+  const result = emacsclientParsed(elisp);
+
+  assert(result.spans === undefined, "Should not have spans field in temp mode");
+});
+
+test("read - no spans when warbo-span-calculators undefined", () => {
+  // Unset the variable
+  emacsclient("(makunbound 'warbo-span-calculators)");
+
+  const elisp = buildReadElisp(testFile, { pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  assert(result.spans === undefined, "Should not have spans when calculators not defined");
+});
+
+test("read - empty spans not included in result", () => {
+  // Set up calculator that returns empty list
+  const setupElisp = `
+    (setq warbo-span-calculators
+      (list (lambda (buf) nil)))
+  `;
+  emacsclient(setupElisp);
+
+  const elisp = buildReadElisp(testFile, { pos: 1, length: 100 });
+  const result = emacsclientParsed(elisp);
+
+  assert(result.spans === undefined, "Should not have spans field when empty");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

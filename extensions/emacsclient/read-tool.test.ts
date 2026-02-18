@@ -633,6 +633,78 @@ test("buildReadElisp - handles zero lines", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildReadElisp - span parameter handling
+// ---------------------------------------------------------------------------
+
+test("buildReadElisp - accepts span parameter", () => {
+  const result = buildReadElisp("test.txt", { span: "fn89f4" });
+  assert(typeof result === "string", "Should return a string");
+  assertContains(result, "fn89f4", "Should reference the span ID");
+});
+
+test("buildReadElisp - span parameter triggers warbo-span-calculators", () => {
+  const result = buildReadElisp("test.txt", { span: "fn89f4" });
+  assertContains(result, "warbo-span-calculators", "Should reference warbo-span-calculators");
+});
+
+test("buildReadElisp - span parameter includes narrowing logic", () => {
+  const result = buildReadElisp("test.txt", { span: "fn89f4" });
+  assertContains(result, "narrow-to-region", "Should include narrowing");
+  assertContains(result, "widen", "Should include widening");
+});
+
+test("buildReadElisp - span parameter includes warning for not found", () => {
+  const result = buildReadElisp("test.txt", { span: "fn89f4" });
+  assertContains(result, "span-warning", "Should include span warning variable");
+  assertContains(result, "not found", "Should include warning message");
+});
+
+test("buildReadElisp - span parameter escapes special characters", () => {
+  const result = buildReadElisp("test.txt", { span: 'span"with"quotes' });
+  assertContains(result, '\\"', "Should escape quotes in span ID");
+});
+
+test("buildReadElisp - without span in temp mode does not calculate spans", () => {
+  const result = buildReadElisp("test.txt", { temp: true });
+  // In temp mode without span, we shouldn't calculate spans for output
+  assertContains(result, "all-spans", "Should define all-spans variable");
+});
+
+test("buildReadElisp - without span and without temp calculates spans", () => {
+  const result = buildReadElisp("test.txt", { temp: false });
+  assertContains(result, "warbo-span-calculators", "Should reference warbo-span-calculators");
+  assertContains(result, "selected-spans", "Should select spans");
+  assertContains(result, "warbo-span-selector", "Should reference warbo-span-selector");
+});
+
+test("buildReadElisp - spans field only added when not empty", () => {
+  const result = buildReadElisp("test.txt", { temp: false });
+  assertContains(result, "when (and spans-json (> (length spans-json) 0))", 
+    "Should only add spans when not empty");
+});
+
+test("buildReadElisp - span uses default selector (first 3)", () => {
+  const result = buildReadElisp("test.txt", { temp: false });
+  assertContains(result, "seq-take spans 3", "Should use default selector taking first 3");
+});
+
+test("buildReadElisp - span warning only added with span parameter", () => {
+  const resultWithSpan = buildReadElisp("test.txt", { span: "fn89f4" });
+  assertContains(resultWithSpan, "when span-warning", "Should add warning with span");
+  
+  const resultWithoutSpan = buildReadElisp("test.txt", { temp: false });
+  // The warning cons should not be generated without span parameter
+  const hasWarningCheck = resultWithoutSpan.includes('(cons "warning" span-warning)');
+  assert(!hasWarningCheck, "Should not add warning without span parameter");
+});
+
+test("buildReadElisp - span with temp mode still narrows", () => {
+  const result = buildReadElisp("test.txt", { span: "fn89f4", temp: true });
+  assertContains(result, "narrow-to-region", "Should still narrow in temp mode");
+  assertContains(result, "widen", "Should still widen in temp mode");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

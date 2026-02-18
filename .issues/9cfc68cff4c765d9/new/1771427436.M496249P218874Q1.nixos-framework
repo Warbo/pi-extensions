@@ -1,0 +1,36 @@
+From: Chris Warburton
+Date: Wed, 18 Feb 2026 15:10:36 +0000
+Subject: Re: comment
+Message-Id: <9cfc68cff4c765d9-8d6d94792d743020-artemis@nixos-framework>
+References: <9cfc68cff4c765d9-0-artemis@nixos-framework>
+In-Reply-To: <9cfc68cff4c765d9-0-artemis@nixos-framework>
+
+Implementation complete! 
+
+## Summary of changes:
+
+### 1. ELisp code (elisp.ts):
+- Added `span` parameter to `buildReadElisp` function
+- Implemented span calculation logic that calls `warbo-span-calculators` (or uses empty list as fallback)
+- Implemented span selection logic that uses `warbo-span-selector` (or takes first 3 as fallback)
+- Added narrowing logic when span parameter is provided
+- Added warning generation when requested span is not found
+- Added widen logic to restore buffer after narrowing
+- Added spans field to result (only when not empty and not in temp mode)
+- Added warning field to result (only when span parameter provided and not found)
+
+### 2. JS code (index.ts):
+- Added `span` parameter to the read tool schema
+- Passed span parameter through to buildReadElisp
+- Removed TODO comments
+
+### 3. Unit tests (read-tool.test.ts):
+- Added 11 unit tests covering span parameter handling
+- Tests verify span escaping, narrowing, warning messages, and selector logic
+
+### 4. Integration tests (read-tool-integration.test.ts):
+- Added 9 integration tests that run against real Emacs daemon
+- Tests verify span calculation, selection, narrowing, warnings, and temp mode behavior
+- Tests cover both when warbo-span-* variables are defined and undefined
+
+All functionality described in the issue has been implemented and tested.

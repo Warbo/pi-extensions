@@ -307,6 +307,7 @@ export default function (pi: ExtensionAPI) {
           length: params.length,
           lines: params.lines,
           temp: params.temp,
+          span: params.span,
         },
         maxLength
       );
