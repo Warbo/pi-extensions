@@ -39,7 +39,7 @@ export function buildListBuffersElisp(): string {
               (list
                 (cons "name" name)
                 (cons "filepath" (buffer-file-name))
-                (cons "modified" (if (buffer-modified-p) t :json-false))
+                (cons "unsaved" (if (buffer-modified-p) t :json-false))
                 (cons "outdated" (if (buffer-file-name)
                                    (if (not (verify-visited-file-modtime buf)) t :json-false)
                                  :json-false))
@@ -323,7 +323,7 @@ export function buildReadElisp(
                       (cons "exists" (if (buffer-file-name)
                                         (if (file-exists-p (buffer-file-name)) t :json-false)
                                       nil))
-                      (cons "changed" (if (buffer-modified-p) t :json-false))
+                      (cons "unsaved" (if (buffer-modified-p) t :json-false))
                       (cons "outdated" (if (buffer-file-name)
                                           (if (not (verify-visited-file-modtime (current-buffer))) t :json-false)
                                         :json-false))

@@ -413,14 +413,14 @@ test("read - reports line count correctly", () => {
   assertEqual(result.lines, 5);
 });
 
-test("read - detects changed buffer", () => {
+test("read - detects unsaved buffer", () => {
   // Open and modify buffer
   emacsclient(`(progn (find-file "${testFile}") (insert "x") (set-buffer-modified-p t))`);
 
   const elisp = buildReadElisp(testFile, { length: 10 });
   const result = emacsclientParsed(elisp);
 
-  assertEqual(result.changed, true);
+  assertEqual(result.unsaved, true);
 });
 
 test("read - detects unchanged buffer", () => {
@@ -429,7 +429,7 @@ test("read - detects unchanged buffer", () => {
   const elisp = buildReadElisp(testFile, { pos: 1, length: 10 });
   const result = emacsclientParsed(elisp);
 
-  assertEqual(result.changed, false);
+  assertEqual(result.unsaved, false);
 });
 
 test("read - reports correct major mode", () => {

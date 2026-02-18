@@ -291,7 +291,7 @@ async function runTest(name: string, testFn: (tempDir: string) => Promise<boolea
     "pi calls emacs_list_buffers and gets buffer list",
     async (tempDir) => {
       const fakeResponse =
-        '"[{\\"name\\":\\"main.py\\",\\"filepath\\":\\"/home/test/main.py\\",\\"modified\\":false,\\"majorMode\\":\\"python-mode\\",\\"size\\":1234,\\"visible\\":false}]"';
+        '"[{\\"name\\":\\"main.py\\",\\"filepath\\":\\"/home/test/main.py\\",\\"unsaved\\":false,\\"outdated\\":false,\\"majorMode\\":\\"python-mode\\",\\"size\\":1234,\\"visible\\":false}]"';
 
       const fakeDir = createFakeEmacsclient(tempDir, {
         "buffer-list": fakeResponse,
