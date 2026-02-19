@@ -386,6 +386,10 @@ export default function (pi: ExtensionAPI) {
       insert: Type.Optional(Type.String({
         description: "Text to insert at the specified position.",
       })),
+      type: Type.Optional(Type.String({
+        description: "Keyboard macro to type in buffer (via 'kbd'). Runs " +
+          "after insert (if given) and before save (if applicable).",
+      })),
       pos: Type.Optional(
         Type.Number({
           description:
@@ -444,6 +448,7 @@ export default function (pi: ExtensionAPI) {
           replace: params.replace,
           save: params.save,
           temp: params.temp,
+          type: params.type,
         }
       );
       const result = await emacsEval(elisp, getOptions(signal));

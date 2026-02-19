@@ -639,6 +639,236 @@ test("buildWriteElisp - replace + save + temp", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildWriteElisp - type parameter (keyboard macro)
+// ---------------------------------------------------------------------------
+
+test("buildWriteElisp - accepts type parameter", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-x C-s" });
+  assertContains(result, "execute-kbd-macro", "Should call execute-kbd-macro");
+  assertContains(result, "kbd", "Should use kbd to parse the macro string");
+});
+
+test("buildWriteElisp - type includes the macro string", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-c C-c" });
+  assertContains(result, "C-c C-c", "Should include the macro string verbatim");
+});
+
+test("buildWriteElisp - type alone (no insert) is valid", () => {
+  // Running a macro without inserting text is explicitly a supported use case
+  const result = buildWriteElisp("test.txt", undefined, { type: "RET" });
+  assert(typeof result === "string", "Should not throw");
+  assertContains(result, "execute-kbd-macro", "Should execute the macro");
+});
+
+test("buildWriteElisp - type alone does not emit (insert ...) call", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "M-x fill-paragraph RET" });
+  assert(!/\(insert "/.test(result), "Should not call (insert ...) when no insert text given");
+});
+
+test("buildWriteElisp - type result includes typed field", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-e" });
+  assertContains(result, '"typed"', "Result object should include typed field");
+  assertContains(result, "C-e", "typed field should carry the macro string");
+});
+
+test("buildWriteElisp - type alone omits inserted and length fields from result", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-e" });
+  assert(!result.includes('"inserted"'), "Should omit inserted field when no insert");
+  assert(!result.includes('"length"'), "Should omit length field when no insert");
+});
+
+test("buildWriteElisp - type escapes double-quotes", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: 'C-c "mark" C-c' });
+  assertContains(result, '\\"', "Should escape quotes inside macro string");
+});
+
+test("buildWriteElisp - type escapes newlines", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-c\nC-c" });
+  assertContains(result, "\\n", "Should escape newlines in macro string");
+});
+
+test("buildWriteElisp - type alone balanced parentheses", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-c C-c" });
+  let depth = 0;
+  for (const ch of result) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    assert(depth >= 0, "Parentheses went negative");
+  }
+  assertEqual(depth, 0, "Parentheses not balanced");
+});
+
+test("buildWriteElisp - type with pos: navigates before executing macro", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "RET", pos: 10 });
+  assertContains(result, "goto-char", "Should navigate to position");
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+  assert(result.indexOf("goto-char") < result.indexOf("execute-kbd-macro"),
+    "Should navigate before executing macro");
+});
+
+test("buildWriteElisp - type with line: navigates before executing macro", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-k", line: 5 });
+  assertContains(result, "forward-line", "Should navigate to line");
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+  assert(result.indexOf("forward-line") < result.indexOf("execute-kbd-macro"),
+    "Should navigate before executing macro");
+});
+
+test("buildWriteElisp - type with replace: clears buffer before executing macro", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-x C-s", replace: true });
+  assertContains(result, "delete-region", "Should clear buffer");
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+  assert(result.indexOf("delete-region") < result.indexOf("execute-kbd-macro"),
+    "Should clear buffer before executing macro");
+});
+
+test("buildWriteElisp - type with save: executes macro before saving", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-c C-c", save: true });
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+  assertContains(result, "save-buffer", "Should save buffer");
+  assert(result.indexOf("execute-kbd-macro") < result.indexOf("save-buffer"),
+    "Should execute macro before saving");
+});
+
+test("buildWriteElisp - type with temp: wraps in save-excursion", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "M-<", temp: true });
+  assertContains(result, "save-excursion", "Should use save-excursion in temp mode");
+  assertContains(result, "execute-kbd-macro", "Should still execute macro");
+});
+
+test("buildWriteElisp - type with pos + save + temp", () => {
+  const result = buildWriteElisp("test.txt", undefined, { type: "C-e", pos: 50, save: true, temp: true });
+  assertContains(result, "goto-char", "Should navigate");
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+  assertContains(result, "save-buffer", "Should save");
+  assertContains(result, "kill-buffer", "Should kill buffer in temp mode");
+});
+
+// ---------------------------------------------------------------------------
+// buildWriteElisp - type + insert combination
+// ---------------------------------------------------------------------------
+
+test("buildWriteElisp - type with insert includes both operations", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e" });
+  assertContains(result, "(insert ", "Should insert text");
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+});
+
+test("buildWriteElisp - type runs after insert", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e" });
+  assert(result.indexOf("(insert ") < result.indexOf("execute-kbd-macro"),
+    "insert should run before execute-kbd-macro");
+});
+
+test("buildWriteElisp - type with insert result includes both inserted and typed fields", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e" });
+  assertContains(result, '"inserted"', "Result should include inserted field");
+  assertContains(result, '"typed"',    "Result should include typed field");
+});
+
+test("buildWriteElisp - type with insert and save: order is insert -> macro -> save", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e", save: true });
+  const insertIdx = result.indexOf("(insert ");
+  const kbdIdx    = result.indexOf("execute-kbd-macro");
+  const saveIdx   = result.indexOf("save-buffer");
+  assert(insertIdx < kbdIdx, "insert should come before macro");
+  assert(kbdIdx    < saveIdx, "macro should come before save");
+});
+
+test("buildWriteElisp - type with insert and replace: order is delete -> insert -> macro", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e", replace: true });
+  const deleteIdx = result.indexOf("delete-region");
+  const insertIdx = result.indexOf("(insert ");
+  const kbdIdx    = result.indexOf("execute-kbd-macro");
+  assert(deleteIdx < insertIdx, "delete should come before insert");
+  assert(insertIdx < kbdIdx,    "insert should come before macro");
+});
+
+test("buildWriteElisp - type with insert and temp", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e", temp: true });
+  assertContains(result, "save-excursion",  "Should restore state in temp mode");
+  assertContains(result, "(insert ",        "Should insert text");
+  assertContains(result, "execute-kbd-macro", "Should execute macro");
+});
+
+test("buildWriteElisp - type with insert and replace + save + temp: full order", () => {
+  const result = buildWriteElisp("test.txt", "hello", { type: "C-e", replace: true, save: true, temp: true });
+  const deleteIdx = result.indexOf("delete-region");
+  const insertIdx = result.indexOf("(insert ");
+  const kbdIdx    = result.indexOf("execute-kbd-macro");
+  const saveIdx   = result.indexOf("save-buffer");
+  const killIdx   = result.indexOf("kill-buffer");
+  assert(deleteIdx < insertIdx, "delete before insert");
+  assert(insertIdx < kbdIdx,    "insert before macro");
+  assert(kbdIdx    < saveIdx,   "macro before save");
+  assert(saveIdx   < killIdx,   "save before kill");
+});
+
+test("buildWriteElisp - type with insert balanced parentheses", () => {
+  const result = buildWriteElisp("test.txt", "hello world", { type: "C-x C-s", save: true, temp: true });
+  let depth = 0;
+  for (const ch of result) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    assert(depth >= 0, "Parentheses went negative");
+  }
+  assertEqual(depth, 0, "Parentheses not balanced");
+});
+
+// ---------------------------------------------------------------------------
+// buildWriteElisp - neither insert nor type (navigation / clear / save only)
+// ---------------------------------------------------------------------------
+
+test("buildWriteElisp - neither insert nor type is valid (navigate only)", () => {
+  // e.g. just move point without touching buffer contents
+  const result = buildWriteElisp("test.txt", undefined, { pos: 100 });
+  assert(typeof result === "string", "Should not throw");
+  assertContains(result, "goto-char", "Should navigate to position");
+});
+
+test("buildWriteElisp - neither insert nor type with save (save-only)", () => {
+  const result = buildWriteElisp("test.txt", undefined, { save: true });
+  assert(typeof result === "string", "Should not throw");
+  assertContains(result, "save-buffer", "Should save buffer");
+});
+
+test("buildWriteElisp - neither insert nor type with replace (clear-only)", () => {
+  const result = buildWriteElisp("test.txt", undefined, { replace: true });
+  assert(typeof result === "string", "Should not throw");
+  assertContains(result, "delete-region", "Should clear buffer");
+});
+
+test("buildWriteElisp - neither insert nor type with line + save", () => {
+  const result = buildWriteElisp("test.txt", undefined, { line: 42, save: true });
+  assert(typeof result === "string", "Should not throw");
+  assertContains(result, "save-buffer", "Should save buffer");
+});
+
+test("buildWriteElisp - neither insert nor type with temp (peek metadata)", () => {
+  // Valid: open buffer, capture metadata, restore state
+  const result = buildWriteElisp("test.txt", undefined, { temp: true });
+  assert(typeof result === "string", "Should not throw");
+  assertContains(result, "save-excursion", "Should restore state");
+});
+
+test("buildWriteElisp - neither insert nor type omits inserted, length, and typed from result", () => {
+  const result = buildWriteElisp("test.txt", undefined, { save: true });
+  assert(!result.includes('"inserted"'), "Should not include inserted field");
+  assert(!result.includes('"typed"'),    "Should not include typed field");
+});
+
+test("buildWriteElisp - neither insert nor type balanced parentheses", () => {
+  const result = buildWriteElisp("test.txt", undefined, { pos: 1, save: true, temp: true });
+  let depth = 0;
+  for (const ch of result) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    assert(depth >= 0, "Parentheses went negative");
+  }
+  assertEqual(depth, 0, "Parentheses not balanced");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

@@ -543,6 +543,7 @@ export function buildWriteElisp(
     save?: boolean;
     temp?: boolean;
     replace?: boolean;
+    type?: string;
   } = {}
 ): string {
   // Validate ambiguous position parameters
@@ -596,6 +597,8 @@ export function buildWriteElisp(
             (forward-line (1- target-line)))))` : ''}
       ;; Insert text at current point (if provided)
       ${insert !== undefined ? `(insert "${escapeElispString(insert)}")` : ''}
+      ;; Execute keyboard macro (if provided)
+      ${options.type !== undefined ? `(execute-kbd-macro (kbd "${escapeElispString(options.type)}"))` : ''}
       ;; Save buffer if requested
       ${save ? `
       (when (buffer-file-name)
@@ -609,6 +612,7 @@ export function buildWriteElisp(
                         :json-false))
        ${insert !== undefined ? `(cons "inserted" "${escapeElispString(insert)}")
        (cons "length" ${insert.length})` : ''}
+       ${options.type !== undefined ? `(cons "typed" "${escapeElispString(options.type)}")` : ''}
        (cons "point" (list
                       (cons "pos" (point))
                       (cons "line" (line-number-at-pos))
