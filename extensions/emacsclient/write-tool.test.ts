@@ -370,7 +370,7 @@ test("buildWriteElisp - uses json-encode", () => {
 test("buildWriteElisp - includes result metadata", () => {
   const result = buildWriteElisp("test.txt", "hello");
   const requiredFields = [
-    "name", "path", "inserted", "length", "point", "saved", "new", "dead"
+    "name", "path", "length", "point", "saved", "new", "dead"
   ];
 
   for (const field of requiredFields) {
@@ -665,12 +665,6 @@ test("buildWriteElisp - type alone does not emit (insert ...) call", () => {
   assert(!/\(insert "/.test(result), "Should not call (insert ...) when no insert text given");
 });
 
-test("buildWriteElisp - type result includes typed field", () => {
-  const result = buildWriteElisp("test.txt", undefined, { type: "C-e" });
-  assertContains(result, '"typed"', "Result object should include typed field");
-  assertContains(result, "C-e", "typed field should carry the macro string");
-});
-
 test("buildWriteElisp - type alone omits inserted and length fields from result", () => {
   const result = buildWriteElisp("test.txt", undefined, { type: "C-e" });
   assert(!result.includes('"inserted"'), "Should omit inserted field when no insert");
@@ -758,12 +752,6 @@ test("buildWriteElisp - type runs after insert", () => {
   const result = buildWriteElisp("test.txt", "hello", { type: "C-e" });
   assert(result.indexOf("(insert ") < result.indexOf("execute-kbd-macro"),
     "insert should run before execute-kbd-macro");
-});
-
-test("buildWriteElisp - type with insert result includes both inserted and typed fields", () => {
-  const result = buildWriteElisp("test.txt", "hello", { type: "C-e" });
-  assertContains(result, '"inserted"', "Result should include inserted field");
-  assertContains(result, '"typed"',    "Result should include typed field");
 });
 
 test("buildWriteElisp - type with insert and save: order is insert -> macro -> save", () => {

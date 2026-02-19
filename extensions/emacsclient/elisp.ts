@@ -610,9 +610,6 @@ export function buildWriteElisp(
        (cons "outdated" (if (buffer-file-name)
                           (if (not (verify-visited-file-modtime (current-buffer))) t :json-false)
                         :json-false))
-       ${insert !== undefined ? `(cons "inserted" "${escapeElispString(insert)}")
-       (cons "length" ${insert.length})` : ''}
-       ${options.type !== undefined ? `(cons "typed" "${escapeElispString(options.type)}")` : ''}
        (cons "point" (list
                       (cons "pos" (point))
                       (cons "line" (line-number-at-pos))
