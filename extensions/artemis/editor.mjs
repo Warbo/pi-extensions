@@ -34,7 +34,11 @@ temp="$1.tmp"
     if [ "\${found_subject}" -eq 0 ]; then
       case "\${line}" in
         Subject:*)
-          echo "Subject: \${SUBJECT}"
+          if [[ -n "\${SUBJECT}" ]]; then
+            echo "Subject: \${SUBJECT}"
+          else
+            echo "\${line}"
+          fi
           found_subject=1
           ;;
         *)

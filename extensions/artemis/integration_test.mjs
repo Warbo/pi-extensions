@@ -4,7 +4,7 @@
  * Tests extension with pi in RPC mode and actual git artemis execution
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let failCount = 0;
+const trackedProcesses = [];
 
 function testPass(name) {
 	console.log(`ok - ${name}`);
@@ -34,11 +35,17 @@ function startPi(extensions, cwd) {
 		...extensions.flatMap(ext => ["-e", ext])
 	];
 	
-	return spawn("pi", args, {
+	const proc = spawn("pi", args, {
 		stdio: ["pipe", "pipe", "pipe"],
 		cwd,
 		env: { ...process.env, HOME: cwd }
 	});
+	trackedProcesses.push(proc);
+	proc.on("close", () => {
+		const idx = trackedProcesses.indexOf(proc);
+		if (idx >= 0) trackedProcesses.splice(idx, 1);
+	});
+	return proc;
 }
 
 function sendCommand(proc, cmd) {
@@ -180,15 +187,15 @@ export default function (pi: ExtensionAPI) {
 }
 
 function initGitRepo(dir) {
-	// Initialize git repo
-	spawn("git", ["init"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
-	spawn("git", ["config", "user.name", "Test User"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
-	spawn("git", ["config", "user.email", "test@example.com"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+	// Initialize git repo (synchronous to ensure correct ordering)
+	spawnSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+	spawnSync("git", ["config", "user.name", "Test User"], { cwd: dir, stdio: "ignore" });
+	spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: dir, stdio: "ignore" });
 	
 	// Create initial commit
 	writeFileSync(join(dir, "README.md"), "# Test Repo\n", "utf-8");
-	spawn("git", ["add", "."], { cwd: dir, stdio: "ignore" }).on("close", () => {});
-	spawn("git", ["commit", "-m", "Initial commit"], { cwd: dir, stdio: "ignore" }).on("close", () => {});
+	spawnSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
+	spawnSync("git", ["commit", "-m", "Initial commit"], { cwd: dir, stdio: "ignore" });
 }
 
 async function runTest(name, testFn) {
@@ -198,9 +205,6 @@ async function runTest(name, testFn) {
 	try {
 		// Initialize git repo with artemis
 		initGitRepo(tempDir);
-		
-		// Wait for git init to complete
-		await new Promise(resolve => setTimeout(resolve, 1000));
 		
 		// Initialize artemis
 		const artemisInit = spawn("git", ["artemis", "list"], { cwd: tempDir, stdio: "pipe" });
@@ -221,7 +225,15 @@ async function runTest(name, testFn) {
 	} catch (error) {
 		testFail(name, error.message);
 	} finally {
-		rmSync(tempDir, { recursive: true, force: true });
+		// Kill any pi processes left running (e.g. from timeouts)
+		const leftover = trackedProcesses.splice(0);
+		for (const proc of leftover) {
+			proc.kill("SIGKILL");
+		}
+		if (leftover.length > 0) {
+			await new Promise(resolve => setTimeout(resolve, 500));
+		}
+		rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 	}
 }
 
@@ -412,7 +424,8 @@ async function runTest(name, testFn) {
 				text: "Closing issue",
 				toolCall: {
 					command: "close",
-					issueId: issueId
+					issueId: issueId,
+					closeCommentBody: "Closing in integration test"
 				}
 			}
 		});

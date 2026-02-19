@@ -62,6 +62,11 @@ const ArtemisParams = Type.Object({
 	commentNumber: Type.Optional(Type.Number({
 		description: "Comment number to show (optional, for 'show' command)"
 	})),
+
+	// For close (comment)
+	closeCommentBody: Type.Optional(Type.String({
+		description: "Comment text to add when closing issue (required for close)"
+	})),
 });
 
 type CommandResult = {
@@ -185,9 +190,28 @@ const commandHandlers: Record<string, (params: any) => Promise<CommandResult>> =
 			};
 		}
 
-		const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed", "-n"];
-		const cmdString = `git artemis ${args.join(" ")}`;
-		return { args, cmdString };
+		if (!params.closeCommentBody) {
+			return {
+				error: true,
+				content: [{
+					type: "text",
+					text: "Error: closeCommentBody required for 'close' command"
+				}],
+				details: {
+					command: "git artemis add <id> -p ...",
+					stdout: "",
+					stderr: "missing closeCommentBody",
+					exitCode: 1,
+				} as ArtemisDetails,
+			};
+		}
+
+		const scriptContent = createEditorScript();
+		const editorScript = await writeEditorScript(scriptContent);
+
+		const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed"];
+		const cmdString = `git artemis ${args.join(" ")} (with EDITOR and comment)`;
+		return { args, cmdString, editorScript };
 	},
 };
 
@@ -210,8 +234,8 @@ Commands:
   Show issue: git_artemis(command="show", issueId="abc123")
   Show comment: git_artemis(command="show", issueId="abc123", commentNumber=0)
 
-- close: Close an issue (sets state=resolved, resolution=fixed)
-  Example: git_artemis(command="close", issueId="abc123")
+- close: Close an issue (sets state=resolved, resolution=fixed) and add a comment
+  Example: git_artemis(command="close", issueId="abc123", closeCommentBody="Fixed in v1.0")
 
 Use this to log problems, track tasks, and manage issue status.`,
 
@@ -258,18 +282,21 @@ Use this to log problems, track tasks, and manage issue status.`,
 
 				// Execute using shell to set environment variables
 				let result: any;
-				if (params.command === "add") {
+				if (params.command === "add" || params.command === "close") {
 					// Build environment variable prefix
 					const envVars: string[] = [];
 					if (editorScript) {
 						envVars.push(`EDITOR='${editorScript}'`);
 					}
-					if (params.issueId) {
+					if (params.command === "add" && params.issueId) {
 						envVars.push(`SUBJECT='Re: comment'`);
 						envVars.push(`BODY='${params.commentBody?.replace(/'/g, "'\\''") || ""}'`);
-					} else {
+					} else if (params.command === "add" && !params.issueId) {
 						envVars.push(`SUBJECT='${params.subject?.replace(/'/g, "'\\''") || ""}'`);
 						envVars.push(`BODY='${params.body?.replace(/'/g, "'\\''") || ""}'`);
+					} else if (params.command === "close") {
+						// For close command with comment body
+						envVars.push(`BODY='${params.closeCommentBody?.replace(/'/g, "'\\''") || ""}'`);
 					}
 
 					const shellCmd = `${envVars.join(' ')} git artemis ${args.join(' ')}`;
