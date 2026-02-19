@@ -383,9 +383,9 @@ export default function (pi: ExtensionAPI) {
           "Treated as path if contains '/', otherwise a buffer name. " +
           "Relative paths can use './'. Supports TRAMP paths.",
       }),
-      insert: Type.String({
+      insert: Type.Optional(Type.String({
         description: "Text to insert at the specified position.",
-      }),
+      })),
       pos: Type.Optional(
         Type.Number({
           description:

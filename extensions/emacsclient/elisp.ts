@@ -535,7 +535,7 @@ export function buildReadElisp(
  */
 export function buildWriteElisp(
   name: string,
-  insert: string,
+  insert: string | undefined,
   options: {
     pos?: number;
     line?: number;
@@ -594,8 +594,8 @@ export function buildWriteElisp(
           (progn
             (goto-char (point-min))
             (forward-line (1- target-line)))))` : ''}
-      ;; Insert text at current point
-      (insert "${escapeElispString(insert)}")
+      ;; Insert text at current point (if provided)
+      ${insert !== undefined ? `(insert "${escapeElispString(insert)}")` : ''}
       ;; Save buffer if requested
       ${save ? `
       (when (buffer-file-name)
@@ -607,8 +607,8 @@ export function buildWriteElisp(
        (cons "outdated" (if (buffer-file-name)
                           (if (not (verify-visited-file-modtime (current-buffer))) t :json-false)
                         :json-false))
-       (cons "inserted" "${escapeElispString(insert)}")
-       (cons "length" ${insert.length})
+       ${insert !== undefined ? `(cons "inserted" "${escapeElispString(insert)}")
+       (cons "length" ${insert.length})` : ''}
        (cons "point" (list
                       (cons "pos" (point))
                       (cons "line" (line-number-at-pos))
