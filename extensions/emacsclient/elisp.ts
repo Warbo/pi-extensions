@@ -607,6 +607,7 @@ export function buildWriteElisp(
       (list
        (cons "name" (buffer-name))
        (cons "path" (buffer-file-name))
+       (cons "length" (point-max))
        (cons "outdated" (if (buffer-file-name)
                           (if (not (verify-visited-file-modtime (current-buffer))) t :json-false)
                         :json-false))
