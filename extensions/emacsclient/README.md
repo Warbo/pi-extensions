@@ -57,6 +57,7 @@ Read the content and metadata of a file or Emacs buffer.
 - `col` (optional): Column number (used with `line`)
 - `length` (optional): Maximum characters to read (default: 51200)
 - `lines` (optional): Maximum lines to read
+- `span` (optional): Narrow to a span ID (result of a previous read)
 - `temp` (optional): If true, don't modify Emacs state (default: false)
 
 **Returns:** Buffer content, metadata (major mode, size, point position, etc.)
@@ -73,6 +74,49 @@ read({ name: "main.ts", line: 100, lines: 50 })
 
 // Peek at a file without affecting Emacs state
 read({ name: "./config.json", temp: true })
+
+// Read within a span from a previous read
+read({ name: "./config.json", span: "span-id-from-previous-read" })
+```
+
+### `write`
+Insert text into Emacs buffer at a specific position, and optionally type a key sequence. Can create new files/buffers, move point, insert content, type keys, and save.
+
+**Parameters:**
+- `name` (required): File path (if contains `/`) or buffer name. Supports TRAMP paths
+- `insert` (optional): Text to insert at the specified position
+- `pos` (optional): Position to insert at (1-indexed, or negative for relative to end). Conflicts with `line`, `point`, `replace`
+- `line` (optional): Line number to insert at (1-indexed, or negative for relative to end). Conflicts with `pos`, `point`, `replace`
+- `point` (optional): If true, insert at point (start of file if newly opened). Default when no `pos` or `line` given. Conflicts with those
+- `type` (optional): Keyboard macro to type in buffer (via 'kbd'). Runs after insert and before save
+- `replace` (optional): If true, clear buffer contents before inserting. Makes `point`, `pos`, `line` meaningless
+- `save` (optional): If buffer is backed by a file, save it after inserting. Creates parent directories if needed (default: true)
+- `temp` (optional): If true, restore Emacs state afterwards - killing new buffers, restoring point in existing buffers (default: false)
+
+**Returns:** Updated buffer metadata
+
+**Example:**
+```typescript
+// Insert text at the beginning of a file
+write({ name: "./README.md", insert: "# Title\n\n", pos: 1 })
+
+// Append text to a buffer
+write({ name: "notes", insert: "\nNew note", pos: -1 })
+
+// Insert at current point and save
+write({ name: "./src/main.ts", insert: "// TODO: review\n", point: true, save: true })
+
+// Create a new file with content
+write({ name: "./newfile.txt", insert: "Hello, world!", replace: true })
+
+// Replace entire buffer content
+write({ name: "scratch", insert: "Fresh content", replace: true })
+
+// Insert without affecting Emacs state
+write({ name: "./config.json", insert: "new config", pos: 1, temp: true })
+
+// Type a key sequence in the buffer
+write({ name: "main.py", type: "C-x C-s" })
 ```
 
 ### `emacs_eval`
@@ -122,7 +166,9 @@ Run a Tree-sitter query against an Emacs buffer and optionally execute elisp for
 - `lang` (optional): Language hint (e.g., "python", "javascript")
 - `action` (optional): Elisp expression to evaluate for each match
 
-**Returns:** Array of results (one per match)
+**Returns:** An object containing:
+- `results`: Array of results (one per match)
+- `count`: Number of matches found
 
 **Examples:**
 ```typescript
