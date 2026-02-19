@@ -610,7 +610,7 @@ export function buildWriteElisp(
        (cons "outdated" (if (buffer-file-name)
                           (if (not (verify-visited-file-modtime (current-buffer))) t :json-false)
                         :json-false))
-       (cons "saved" ${save ? 't' : ':json-false'})
+       (cons "saved" (if (buffer-modified-p) :json-false 't))
        (cons "new" (if was-new t :json-false))
        (cons "dead" :json-false)
        (cons "point" (list
