@@ -76,4 +76,6 @@ rec {
   );
 
   extensions = mapAttrs (name: _: make-extension name) (readDir ./extensions);
+
+  SYSTEM = pkgs.callPackage ./SYSTEM.nix { inherit (pkgs.llm-agents) pi; };
 }
