@@ -2,11 +2,11 @@
  * Artemis Extension - Git-based issue tracker integration
  *
  * Provides five tools wrapping git artemis commands:
- * - list_issues:   List issues (state=new by default, or all)
- * - new_issue:     Create a new issue with subject and body
- * - comment_issue: Add a comment to an existing issue
- * - show_issue:    Show an issue or a specific comment
- * - close_issue:   Close an issue (sets state=resolved, resolution=fixed)
+ * - issues_list:    List issues (state=new by default, or all)
+ * - issues_new:     Create a new issue with subject and body
+ * - issues_comment: Add a comment to an existing issue
+ * - issues_show:    Show an issue or a specific comment
+ * - issues_close:   Close an issue (sets state=resolved, resolution=fixed)
  *
  * Use cases:
  * - Make notes of problems discovered during development
@@ -74,10 +74,10 @@ function execResult(cmdString: string, stdout: string, stderr: string, code: num
 
 export default function (pi: ExtensionAPI) {
 
-	// ── list_issues ─────────────────────────────────────────────────────────────
+	// ── issues_list ─────────────────────────────────────────────────────────────
 
 	pi.registerTool({
-		name: "list_issues",
+		name: "issues_list",
 		label: "List Issues",
 		description: "List artemis issues. Shows only open issues (state=new) by default; set all=true to include resolved issues.",
 		parameters: Type.Object({
@@ -127,10 +127,10 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// ── new_issue ────────────────────────────────────────────────────────────────
+	// ── issues_new ────────────────────────────────────────────────────────────────
 
 	pi.registerTool({
-		name: "new_issue",
+		name: "issues_new",
 		label: "New Issue",
 		description: "Create a new artemis issue with a subject line and body text.",
 		parameters: Type.Object({
@@ -171,10 +171,10 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// ── comment_issue ────────────────────────────────────────────────────────────
+	// ── issues_comment ────────────────────────────────────────────────────────────
 
 	pi.registerTool({
-		name: "comment_issue",
+		name: "issues_comment",
 		label: "Comment Issue",
 		description: "Add a comment to an existing artemis issue.",
 		parameters: Type.Object({
@@ -210,10 +210,10 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// ── show_issue ───────────────────────────────────────────────────────────────
+	// ── issues_show ───────────────────────────────────────────────────────────────
 
 	pi.registerTool({
-		name: "show_issue",
+		name: "issues_show",
 		label: "Show Issue",
 		description: "Show an artemis issue. Optionally pass commentNumber to show a specific comment (0-indexed).",
 		parameters: Type.Object({
@@ -254,10 +254,10 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// ── close_issue ──────────────────────────────────────────────────────────────
+	// ── issues_close ──────────────────────────────────────────────────────────────
 
 	pi.registerTool({
-		name: "close_issue",
+		name: "issues_close",
 		label: "Close Issue",
 		description: "Close an artemis issue (sets state=resolved, resolution=fixed) and add a closing comment.",
 		parameters: Type.Object({

@@ -257,7 +257,7 @@ async function runTest(name, testFn) {
 			"list issues": {
 				text: "Listing issues",
 				toolCall: {
-					name: "list_issues",
+					name: "issues_list",
 					arguments: {},
 				}
 			}
@@ -278,11 +278,11 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "list issues" });
 		
 		const toolStart = await waitForEvent(events,
-			e => e.type === "tool_execution_start" && e.toolName === "list_issues"
+			e => e.type === "tool_execution_start" && e.toolName === "issues_list"
 		);
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "list_issues"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_list"
 		);
 		
 		pi.kill();
@@ -298,7 +298,7 @@ async function runTest(name, testFn) {
 			"new issue": {
 				text: "Creating issue",
 				toolCall: {
-					name: "new_issue",
+					name: "issues_new",
 					arguments: {
 						subject: "Test Bug",
 						body: "This is a test issue for the integration test",
@@ -322,7 +322,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "new issue" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "new_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_new"
 		);
 		
 		pi.kill();
@@ -374,7 +374,7 @@ async function runTest(name, testFn) {
 			"show issue": {
 				text: "Showing issue",
 				toolCall: {
-					name: "show_issue",
+					name: "issues_show",
 					arguments: {
 						issueId: issueId,
 					}
@@ -397,7 +397,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "show issue" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "show_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_show"
 		);
 		
 		pi.kill();
@@ -438,7 +438,7 @@ async function runTest(name, testFn) {
 			"close issue": {
 				text: "Closing issue",
 				toolCall: {
-					name: "close_issue",
+					name: "issues_close",
 					arguments: {
 						issueId: issueId,
 						body: "Closing in integration test",
@@ -462,7 +462,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "close issue" });
 		
 		await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "close_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_close"
 		);
 		
 		pi.kill();
@@ -521,7 +521,7 @@ async function runTest(name, testFn) {
 			"list all": {
 				text: "Listing all issues",
 				toolCall: {
-					name: "list_issues",
+					name: "issues_list",
 					arguments:{
 						all: true,
 					}
@@ -544,7 +544,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "list all" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "list_issues"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_list"
 		);
 		
 		pi.kill();
@@ -566,7 +566,7 @@ async function runTest(name, testFn) {
 			"create issue": {
 				text: "Creating issue with body",
 				toolCall: {
-					name: "new_issue",
+					name: "issues_new",
 					arguments: {
 						subject: "Body Test Issue",
 						body: testBody,
@@ -590,7 +590,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "create issue" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "new_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_new"
 		);
 		
 		pi.kill();
@@ -639,7 +639,7 @@ async function runTest(name, testFn) {
 			"create issue with body": {
 				text: "Creating issue",
 				toolCall: {
-					name: "new_issue",
+					name: "issues_new",
 					arguments: {
 						subject: "Auth Bug",
 						body: testBody,
@@ -649,7 +649,7 @@ async function runTest(name, testFn) {
 			"show the issue": {
 				text: "Showing issue",
 				toolCall: {
-					name: "show_issue",
+					name: "issues_show",
 					arguments: {
 						issueId: "placeholder", // Will be replaced below
 					}
@@ -674,7 +674,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "create issue with body" });
 		
 		const addEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "new_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_new"
 		);
 		
 		// Extract issue ID
@@ -694,7 +694,7 @@ async function runTest(name, testFn) {
 			"show the issue": {
 				text: "Showing issue",
 				toolCall: {
-					name: "show_issue",
+					name: "issues_show",
 					arguments: {
 						issueId: issueId,
 					}
@@ -721,7 +721,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi2, { type: "prompt", message: "show the issue" });
 		
 		const showEnd = await waitForEvent(events2,
-			e => e.type === "tool_execution_end" && e.toolName === "show_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_show"
 		);
 		
 		pi2.kill();
@@ -769,7 +769,7 @@ async function runTest(name, testFn) {
 			"add comment": {
 				text: "Adding comment",
 				toolCall: {
-					name: "comment_issue",
+					name: "issues_comment",
 					arguments: {
 						issueId: issueId,
 						body: commentBody,
@@ -793,7 +793,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "add comment" });
 		
 		await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "comment_issue"
+			e => e.type === "tool_execution_end" && e.toolName === "issues_comment"
 		);
 		
 		pi.kill();
