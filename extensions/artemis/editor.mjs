@@ -14,7 +14,9 @@ import { join } from "node:path";
  * 
  * The script processes the template line-by-line:
  * 1. Outputs lines as-is until it finds "Subject:"
- * 2. When it finds "Subject:", replaces the entire line with "Subject: $SUBJECT"
+ * 2. When it finds "Subject:":
+ *    - If SUBJECT env var is set (non-empty), replaces the line with "Subject: $SUBJECT"
+ *    - If SUBJECT is absent/empty, leaves the Subject: line unchanged (correct for comments)
  * 3. Continues outputting lines as-is until it finds "Detailed description."
  * 4. When it finds "Detailed description.", replaces it with "$BODY" and stops
  * 
@@ -34,7 +36,7 @@ temp="$1.tmp"
     if [ "\${found_subject}" -eq 0 ]; then
       case "\${line}" in
         Subject:*)
-          if [[ -n "\${SUBJECT}" ]]; then
+          if [ -n "\${SUBJECT}" ]; then
             echo "Subject: \${SUBJECT}"
           else
             echo "\${line}"

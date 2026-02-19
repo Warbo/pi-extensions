@@ -289,7 +289,7 @@ Use this to log problems, track tasks, and manage issue status.`,
 						envVars.push(`EDITOR='${editorScript}'`);
 					}
 					if (params.command === "add" && params.issueId) {
-						envVars.push(`SUBJECT='Re: comment'`);
+						// No SUBJECT set — editor script will leave the subject line unchanged
 						envVars.push(`BODY='${params.commentBody?.replace(/'/g, "'\\''") || ""}'`);
 					} else if (params.command === "add" && !params.issueId) {
 						envVars.push(`SUBJECT='${params.subject?.replace(/'/g, "'\\''") || ""}'`);

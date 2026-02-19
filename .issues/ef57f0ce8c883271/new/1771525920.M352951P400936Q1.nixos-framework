@@ -1,0 +1,12 @@
+From: Chris Warburton
+Date: Thu, 19 Feb 2026 18:29:47 +0000
+State: resolved
+Subject: artemis: adding comments (including when closing) should leave subject unchanged
+Message-Id: <ef57f0ce8c883271-0-artemis@nixos-framework>
+resolution: fixed
+
+Adding a new issue should require a subject and body. In contrast, adding a
+comment should require a body but should not accept a subject. I've altered the
+editor script to leave the Subject: line unchanged if not SUBJECT is passed in.
+We need to (a) test that, and (b) make sure everything else lines up (docs,
+types, assertions, etc.)

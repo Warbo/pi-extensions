@@ -53,7 +53,8 @@ class ArtemisValidator {
 
 	validateClose(params) {
 		if (params.command !== "close") return false;
-		return params.issueId !== undefined;
+		// closeCommentBody is required — closing always adds a comment (no subject needed)
+		return params.issueId !== undefined && params.closeCommentBody !== undefined;
 	}
 
 	buildCommand(params) {
@@ -185,6 +186,16 @@ runTest("Add command - comment builds correct args", () => {
 	if (!args.includes("abc123")) throw new Error("Should include issueId");
 });
 
+runTest("Add command - comment is valid without subject (subject must not be required)", () => {
+	// Comments leave the subject line unchanged; passing 'subject' is meaningless
+	const result = validator.validateAdd({
+		command: "add",
+		issueId: "abc123",
+		commentBody: "No subject needed",
+	});
+	if (!result) throw new Error("Comment without subject param should be valid");
+});
+
 // Show command tests
 runTest("Show command - requires issueId", () => {
 	const result = validator.validateShow({ command: "show" });
@@ -234,18 +245,28 @@ runTest("Close command - requires issueId", () => {
 	if (result) throw new Error("Should fail without issueId");
 });
 
-runTest("Close command - valid with issueId", () => {
+runTest("Close command - requires closeCommentBody", () => {
+	const result = validator.validateClose({
+		command: "close",
+		issueId: "abc123",
+	});
+	if (result) throw new Error("Should fail without closeCommentBody");
+});
+
+runTest("Close command - valid with issueId and closeCommentBody", () => {
 	const result = validator.validateClose({ 
 		command: "close", 
-		issueId: "abc123" 
+		issueId: "abc123",
+		closeCommentBody: "Fixed and closed",
 	});
-	if (!result) throw new Error("Should be valid with issueId");
+	if (!result) throw new Error("Should be valid with issueId and closeCommentBody");
 });
 
 runTest("Close command - builds correct args", () => {
 	const args = validator.buildCommand({ 
 		command: "close", 
-		issueId: "abc123" 
+		issueId: "abc123",
+		closeCommentBody: "Fixed and closed",
 	});
 	if (!args.includes("add")) throw new Error("Should use 'add' subcommand");
 	if (!args.includes("abc123")) throw new Error("Should include issueId");

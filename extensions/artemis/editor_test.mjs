@@ -187,7 +187,47 @@ Detailed description.`);
 });
 
 // Test: Editor script execution for comments
-runTest("Editor works for comments (with Re: subject)", () => {
+runTest("Editor preserves subject when SUBJECT env var not set", () => {
+	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
+	
+	const templateFile = join(testDir, "template.txt");
+	const scriptFile = join(testDir, "editor.sh");
+	
+	writeFileSync(templateFile, `From: Test User
+Date: Wed, 04 Feb 2026 10:00:00 +0000
+Subject: Re: Original Subject
+
+Detailed description.`);
+	
+	const script = createEditorScript();
+	writeFileSync(scriptFile, script, { mode: 0o755 });
+	
+	// Run the script without SUBJECT — it should leave the Subject: line unchanged
+	const env = { ...process.env, BODY: "Comment body text" };
+	delete env.SUBJECT;
+	spawnSync(scriptFile, [templateFile], { env });
+	
+	const output = readFileSync(templateFile, "utf-8");
+	
+	unlinkSync(templateFile);
+	unlinkSync(scriptFile);
+	
+	if (!output.includes("Subject: Re: Original Subject")) {
+		return `Subject line was altered when SUBJECT env var was absent. Output:\n${output}`;
+	}
+	
+	if (!output.includes("Comment body text")) {
+		return `Body not replaced. Output:\n${output}`;
+	}
+	
+	if (output.includes("Detailed description.")) {
+		return `"Detailed description." not removed. Output:\n${output}`;
+	}
+	
+	return true;
+});
+
+runTest("Editor works for comments (body replaced, subject preserved)", () => {
 	const testDir = mkdtempSync(join(tmpdir(), "artemis-test-"));
 	
 	// Create test files (comment template has Subject: Re: ...)
@@ -203,10 +243,10 @@ Detailed description.`);
 	const script = createEditorScript();
 	writeFileSync(scriptFile, script, { mode: 0o755 });
 	
-	// Run the script
-	spawnSync(scriptFile, [templateFile], {
-		env: { ...process.env, SUBJECT: "Re: comment", BODY: "This is my comment\nWith multiple lines" }
-	});
+	// Run the script without SUBJECT — comments should not override subject
+	const env = { ...process.env, BODY: "This is my comment\nWith multiple lines" };
+	delete env.SUBJECT;
+	spawnSync(scriptFile, [templateFile], { env });
 	
 	// Check output
 	const output = readFileSync(templateFile, "utf-8");
@@ -214,6 +254,10 @@ Detailed description.`);
 	// Cleanup
 	unlinkSync(templateFile);
 	unlinkSync(scriptFile);
+	
+	if (!output.includes("Subject: Re: Original Subject")) {
+		return `Subject line was changed. Expected preservation. Output:\n${output}`;
+	}
 	
 	if (!output.includes("This is my comment")) {
 		return `Comment body not replaced. Output:\n${output}`;

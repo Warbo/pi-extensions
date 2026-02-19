@@ -81,7 +81,8 @@ git_artemis(
 
 #### Add Comment (`git artemis add <id>`)
 
-Adds a comment to an existing issue:
+Adds a comment to an existing issue. The subject line is left unchanged (inherited
+from the original issue); only `commentBody` is required — do not pass `subject`:
 
 ```
 git_artemis(
@@ -109,10 +110,15 @@ git_artemis(command="show", issueId="abc1234", commentNumber=0)
 
 #### Close Issue (`git artemis add <id> -p state=resolved -p resolution=fixed`)
 
-Closes an issue:
+Closes an issue and adds a closing comment. `closeCommentBody` is required;
+like all comments, the subject line is left unchanged:
 
 ```
-git_artemis(command="close", issueId="abc1234")
+git_artemis(
+    command="close",
+    issueId="abc1234",
+    closeCommentBody="Fixed in commit abc1234 — circular reference removed"
+)
 ```
 
 ## Example Workflows
@@ -168,7 +174,11 @@ After fixing a problem:
 ```
 User: "I've fixed the memory leak"
 
-LLM: [uses git_artemis(command="close", issueId="def5678")]
+LLM: [uses git_artemis(
+    command="close",
+    issueId="def5678",
+    closeCommentBody="Fixed by breaking the circular reference in cache.invalidate()"
+)]
 "Great! I've closed issue def5678 and marked it as resolved/fixed."
 ```
 
