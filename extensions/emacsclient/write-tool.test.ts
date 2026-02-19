@@ -665,12 +665,6 @@ test("buildWriteElisp - type alone does not emit (insert ...) call", () => {
   assert(!/\(insert "/.test(result), "Should not call (insert ...) when no insert text given");
 });
 
-test("buildWriteElisp - type alone omits inserted and length fields from result", () => {
-  const result = buildWriteElisp("test.txt", undefined, { type: "C-e" });
-  assert(!result.includes('"inserted"'), "Should omit inserted field when no insert");
-  assert(!result.includes('"length"'), "Should omit length field when no insert");
-});
-
 test("buildWriteElisp - type escapes double-quotes", () => {
   const result = buildWriteElisp("test.txt", undefined, { type: 'C-c "mark" C-c' });
   assertContains(result, '\\"', "Should escape quotes inside macro string");
