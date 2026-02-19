@@ -1,13 +1,12 @@
 /**
  * Artemis Extension - Git-based issue tracker integration
  *
- * This extension provides a `git_artemis` tool that wraps git artemis commands:
- * - git artemis list - List issues with state=new (or all with -a)
- * - git artemis add - Create an issue (subject + body)
- * - git artemis add <id> - Add comment to an issue
- * - git artemis show <id> - Show an issue
- * - git artemis show <id> <n> - Show comment n on an issue
- * - git artemis add <id> -p state=resolved -p resolution=fixed - Close an issue
+ * Provides five tools wrapping git artemis commands:
+ * - list_issues:   List issues (state=new by default, or all)
+ * - new_issue:     Create a new issue with subject and body
+ * - comment_issue: Add a comment to an existing issue
+ * - show_issue:    Show an issue or a specific comment
+ * - close_issue:   Close an issue (sets state=resolved, resolution=fixed)
  *
  * Use cases:
  * - Make notes of problems discovered during development
@@ -16,7 +15,6 @@
  * - Close issues as work progresses
  */
 
-import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
@@ -30,411 +28,269 @@ interface ArtemisDetails {
 	exitCode: number;
 }
 
-const ArtemisParams = Type.Object({
-	command: StringEnum(["list", "add", "show", "close"] as const, {
-		description: "Command: list (show issues), add (create issue or comment), show (view issue/comment), close (mark issue resolved)",
-	}),
+/**
+ * Run a git artemis command that requires an EDITOR script to write content.
+ * Writes a temporary editor script, runs the command with it, then cleans up.
+ */
+async function runWithEditor(
+	pi: ExtensionAPI,
+	args: string[],
+	env: Record<string, string>,
+	signal: AbortSignal | undefined,
+	cwd: string,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+	const editorScript = await writeEditorScript(createEditorScript());
+	try {
+		const envParts = [
+			`EDITOR='${editorScript}'`,
+			...Object.entries(env).map(([k, v]) => `${k}='${v.replace(/'/g, "'\\''")}'`),
+		];
+		const shellCmd = `${envParts.join(" ")} git artemis ${args.join(" ")}`;
+		return await pi.exec("sh", ["-c", shellCmd], { signal, cwd });
+	} finally {
+		try { await unlink(editorScript); } catch { /* ignore cleanup errors */ }
+	}
+}
 
-	// For list
-	all: Type.Optional(Type.Boolean({
-		description: "Show all issues instead of just state=new (default: false)"
-	})),
+/** Build a standard cancelled result. */
+function cancelledResult(cmdString: string) {
+	return {
+		content: [{ type: "text" as const, text: "Cancelled" }],
+		details: { command: cmdString, stdout: "", stderr: "cancelled", exitCode: -1 } as ArtemisDetails,
+	};
+}
 
-	// For add (new issue)
-	subject: Type.Optional(Type.String({
-		description: "Issue subject/title (required for creating new issue)"
-	})),
-	body: Type.Optional(Type.String({
-		description: "Issue body/description (required for creating new issue)"
-	})),
-
-	// For add (comment), show, close
-	issueId: Type.Optional(Type.String({
-		description: "Issue ID (required for comment, show, close)"
-	})),
-
-	// For add (comment)
-	commentBody: Type.Optional(Type.String({
-		description: "Comment text (required for adding comment)"
-	})),
-
-	// For show (comment)
-	commentNumber: Type.Optional(Type.Number({
-		description: "Comment number to show (optional, for 'show' command)"
-	})),
-
-	// For close (comment)
-	closeCommentBody: Type.Optional(Type.String({
-		description: "Comment text to add when closing issue (required for close)"
-	})),
-});
-
-type CommandResult = {
-	args: string[];
-	cmdString: string;
-	editorScript?: string;
-} | {
-	error: true;
-	content: Array<{ type: string; text: string }>;
-	details: ArtemisDetails;
-};
-
-const commandHandlers: Record<string, (params: any) => Promise<CommandResult>> = {
-	list: async (params: any): Promise<CommandResult> => {
-		const args: string[] = ["list"];
-		if (!params.all) {
-			// Default: only show state=new
-			args.push("-p", "state=new");
-		} else {
-			args.push("-a");
-		}
-		const cmdString = `git artemis ${args.join(" ")}`;
-		return { args, cmdString };
-	},
-
-	add: async (params: any): Promise<CommandResult> => {
-		const args: string[] = ["add"];
-
-		if (params.issueId) {
-			// Adding comment to existing issue
-			if (!params.commentBody) {
-				return {
-					error: true,
-					content: [{
-						type: "text",
-						text: "Error: commentBody required when adding comment to issue"
-					}],
-					details: {
-						command: "git artemis add <id>",
-						stdout: "",
-						stderr: "missing commentBody",
-						exitCode: 1,
-					} as ArtemisDetails,
-				};
-			}
-
-			// Create editor script that uses SUBJECT/BODY env vars
-			const scriptContent = createEditorScript();
-			const editorScript = await writeEditorScript(scriptContent);
-
-			args.push(params.issueId);
-			const cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
-			return { args, cmdString, editorScript };
-
-		} else {
-			// Creating new issue
-			if (!params.subject || !params.body) {
-				return {
-					error: true,
-					content: [{
-						type: "text",
-						text: "Error: subject and body required when creating new issue"
-					}],
-					details: {
-						command: "git artemis add",
-						stdout: "",
-						stderr: "missing subject or body",
-						exitCode: 1,
-					} as ArtemisDetails,
-				};
-			}
-
-			// Create editor script that uses SUBJECT/BODY env vars
-			const scriptContent = createEditorScript();
-			const editorScript = await writeEditorScript(scriptContent);
-
-			const cmdString = `git artemis add (with EDITOR)`;
-			return { args, cmdString, editorScript };
-		}
-	},
-
-	show: async (params: any): Promise<CommandResult> => {
-		if (!params.issueId) {
-			return {
-				error: true,
-				content: [{
-					type: "text",
-					text: "Error: issueId required for 'show' command"
-				}],
-				details: {
-					command: "git artemis show",
-					stdout: "",
-					stderr: "missing issueId",
-					exitCode: 1,
-				} as ArtemisDetails,
-			};
-		}
-
-		const args = ["show", params.issueId];
-		if (params.commentNumber !== undefined) {
-			args.push(String(params.commentNumber));
-		}
-		const cmdString = `git artemis ${args.join(" ")}`;
-		return { args, cmdString };
-	},
-
-	close: async (params: any): Promise<CommandResult> => {
-		if (!params.issueId) {
-			return {
-				error: true,
-				content: [{
-					type: "text",
-					text: "Error: issueId required for 'close' command"
-				}],
-				details: {
-					command: "git artemis add <id> -p ...",
-					stdout: "",
-					stderr: "missing issueId",
-					exitCode: 1,
-				} as ArtemisDetails,
-			};
-		}
-
-		if (!params.closeCommentBody) {
-			return {
-				error: true,
-				content: [{
-					type: "text",
-					text: "Error: closeCommentBody required for 'close' command"
-				}],
-				details: {
-					command: "git artemis add <id> -p ...",
-					stdout: "",
-					stderr: "missing closeCommentBody",
-					exitCode: 1,
-				} as ArtemisDetails,
-			};
-		}
-
-		const scriptContent = createEditorScript();
-		const editorScript = await writeEditorScript(scriptContent);
-
-		const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed"];
-		const cmdString = `git artemis ${args.join(" ")} (with EDITOR and comment)`;
-		return { args, cmdString, editorScript };
-	},
-};
+/** Build a result from a raw exec output. */
+function execResult(cmdString: string, stdout: string, stderr: string, code: number, fallbackOk: string) {
+	const success = code === 0;
+	return {
+		content: [{
+			type: "text" as const,
+			text: success ? (stdout || fallbackOk) : `Error: ${stderr || stdout || "Command failed"}`,
+		}],
+		details: { command: cmdString, stdout, stderr, exitCode: code } as ArtemisDetails,
+	};
+}
 
 export default function (pi: ExtensionAPI) {
+
+	// ── list_issues ─────────────────────────────────────────────────────────────
+
 	pi.registerTool({
-		name: "git_artemis",
-		label: "Artemis",
-		description: `Execute git artemis commands to manage issues.
-
-Commands:
-- list: List issues (shows state=new by default, use all=true for all issues)
-  Example: git_artemis(command="list")
-  Example: git_artemis(command="list", all=true)
-
-- add: Create issue OR add comment
-  New issue: git_artemis(command="add", subject="Bug in parser", body="Details about the bug...")
-  Add comment: git_artemis(command="add", issueId="abc123", commentBody="Found the root cause...")
-
-- show: Show issue or specific comment
-  Show issue: git_artemis(command="show", issueId="abc123")
-  Show comment: git_artemis(command="show", issueId="abc123", commentNumber=0)
-
-- close: Close an issue (sets state=resolved, resolution=fixed) and add a comment
-  Example: git_artemis(command="close", issueId="abc123", closeCommentBody="Fixed in v1.0")
-
-Use this to log problems, track tasks, and manage issue status.`,
-
-		parameters: ArtemisParams,
+		name: "list_issues",
+		label: "List Issues",
+		description: "List artemis issues. Shows only open issues (state=new) by default; set all=true to include resolved issues.",
+		parameters: Type.Object({
+			all: Type.Optional(Type.Boolean({
+				description: "Show all issues instead of just state=new (default: false)",
+			})),
+		}),
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			let editorScript: string | undefined;
+			const args = params.all ? ["list", "-a"] : ["list", "-p", "state=new"];
+			const cmdString = `git artemis ${args.join(" ")}`;
+			onUpdate?.({ content: [{ type: "text", text: `Running: ${cmdString}` }] });
 
-			try {
-				// Dispatch to appropriate command handler using object lookup
-				const handler = commandHandlers[params.command];
-				if (!handler) {
-					return {
-						content: [{
-							type: "text",
-							text: `Error: unknown command '${params.command}'`
-						}],
-						details: {
-							command: "git artemis",
-							stdout: "",
-							stderr: "unknown command",
-							exitCode: 1,
-						} as ArtemisDetails,
-					};
-				}
+			const result = await pi.exec("git", ["artemis", ...args], { signal, cwd: ctx.cwd });
+			if (signal?.aborted) return cancelledResult(cmdString);
 
-				const commandResult = await handler(params);
-
-				// Check if command handler returned an error
-				if ("error" in commandResult) {
-					return {
-						content: commandResult.content,
-						details: commandResult.details,
-					};
-				}
-
-				const { args, cmdString } = commandResult;
-				editorScript = commandResult.editorScript;
-
-				// Show progress
-				onUpdate?.({
-					content: [{ type: "text", text: `Running: ${cmdString}` }],
-				});
-
-				// Execute using shell to set environment variables
-				let result: any;
-				if (params.command === "add" || params.command === "close") {
-					// Build environment variable prefix
-					const envVars: string[] = [];
-					if (editorScript) {
-						envVars.push(`EDITOR='${editorScript}'`);
-					}
-					if (params.command === "add" && params.issueId) {
-						// No SUBJECT set — editor script will leave the subject line unchanged
-						envVars.push(`BODY='${params.commentBody?.replace(/'/g, "'\\''") || ""}'`);
-					} else if (params.command === "add" && !params.issueId) {
-						envVars.push(`SUBJECT='${params.subject?.replace(/'/g, "'\\''") || ""}'`);
-						envVars.push(`BODY='${params.body?.replace(/'/g, "'\\''") || ""}'`);
-					} else if (params.command === "close") {
-						// For close command with comment body
-						envVars.push(`BODY='${params.closeCommentBody?.replace(/'/g, "'\\''") || ""}'`);
-					}
-
-					const shellCmd = `${envVars.join(' ')} git artemis ${args.join(' ')}`;
-					result = await pi.exec("sh", ["-c", shellCmd], {
-						signal,
-						cwd: ctx.cwd,
-					});
-				} else {
-					result = await pi.exec("git", ["artemis", ...args], {
-						signal,
-						cwd: ctx.cwd,
-					});
-				}
-
-				// Check for cancellation
-				if (signal?.aborted) {
-					return {
-						content: [{ type: "text", text: "Cancelled" }],
-						details: {
-							command: cmdString,
-							stdout: "",
-							stderr: "cancelled",
-							exitCode: -1,
-						} as ArtemisDetails,
-					};
-				}
-
-				const stdout = result.stdout.trim();
-				const stderr = result.stderr.trim();
-				const success = result.code === 0;
-
-				// Return output
-				return {
-					content: [{
-						type: "text",
-						text: success ? (stdout || "Success") : `Error: ${stderr || stdout || "Command failed"}`,
-					}],
-					details: {
-						command: cmdString,
-						stdout,
-						stderr,
-						exitCode: result.code,
-					} as ArtemisDetails,
-				};
-
-			} finally {
-				// Clean up editor script
-				if (editorScript) {
-					try {
-						await unlink(editorScript);
-					} catch {
-						// Ignore cleanup errors
-					}
-				}
-			}
+			const stdout = result.stdout.trim();
+			const stderr = result.stderr.trim();
+			return execResult(cmdString, stdout, stderr, result.code, "No issues found");
 		},
 
 		renderCall(args, theme) {
-			let text = theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", args.command);
+			const suffix = args.all ? theme.fg("dim", " --all") : "";
+			return new Text(theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", "list") + suffix, 0, 0);
+		},
 
-			if (args.issueId) {
-				text += " " + theme.fg("muted", args.issueId);
+		renderResult(result, { expanded }, theme) {
+			const details = result.details as ArtemisDetails | undefined;
+			if (!details) return new Text(result.content[0]?.type === "text" ? result.content[0].text : "", 0, 0);
+			if (details.exitCode !== 0) return new Text(theme.fg("error", `✗ ${details.stderr || details.stdout}`), 0, 0);
+
+			const output = details.stdout;
+			if (!output) return new Text(theme.fg("dim", "No issues found"), 0, 0);
+
+			const lines = output.split("\n").filter(l => l.trim());
+			const displayLines = expanded ? lines : lines.slice(0, 10);
+
+			let text = theme.fg("success", "✓ ") + theme.fg("muted", `${lines.length} issue(s):`);
+			for (const line of displayLines) {
+				const highlighted = line.replace(/([a-f0-9]{16})/g, (id) => theme.fg("accent", id));
+				text += "\n" + theme.fg("muted", highlighted);
 			}
-
-			if (args.subject) {
-				text += " " + theme.fg("dim", `"${args.subject}"`);
+			if (!expanded && lines.length > 10) {
+				text += "\n" + theme.fg("dim", `... ${lines.length - 10} more`);
 			}
+			return new Text(text, 0, 0);
+		},
+	});
 
-			if (args.commentNumber !== undefined) {
-				text += " " + theme.fg("dim", `#${args.commentNumber}`);
-			}
+	// ── new_issue ────────────────────────────────────────────────────────────────
 
+	pi.registerTool({
+		name: "new_issue",
+		label: "New Issue",
+		description: "Create a new artemis issue with a subject line and body text.",
+		parameters: Type.Object({
+			subject: Type.String({ description: "Issue subject/title" }),
+			body: Type.String({ description: "Issue body/description" }),
+		}),
+
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const cmdString = "git artemis add (with EDITOR)";
+			onUpdate?.({ content: [{ type: "text", text: `Running: ${cmdString}` }] });
+
+			const result = await runWithEditor(pi, ["add"], { SUBJECT: params.subject, BODY: params.body }, signal, ctx.cwd);
+			if (signal?.aborted) return cancelledResult(cmdString);
+
+			const stdout = result.stdout.trim();
+			const stderr = result.stderr.trim();
+			return execResult(cmdString, stdout, stderr, result.code, "Issue created");
+		},
+
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", "new") + " " + theme.fg("dim", `"${args.subject}"`),
+				0, 0,
+			);
+		},
+
+		renderResult(result, _opts, theme) {
+			const details = result.details as ArtemisDetails | undefined;
+			if (!details) return new Text(result.content[0]?.type === "text" ? result.content[0].text : "", 0, 0);
+			if (details.exitCode !== 0) return new Text(theme.fg("error", `✗ ${details.stderr || details.stdout}`), 0, 0);
+
+			const output = details.stdout;
+			const issueIdMatch = output.match(/([a-f0-9]{16})/);
+			const highlighted = issueIdMatch
+				? output.replace(issueIdMatch[1], theme.fg("accent", issueIdMatch[1]))
+				: output || "Issue created";
+			return new Text(theme.fg("success", "✓ ") + theme.fg("muted", highlighted), 0, 0);
+		},
+	});
+
+	// ── comment_issue ────────────────────────────────────────────────────────────
+
+	pi.registerTool({
+		name: "comment_issue",
+		label: "Comment Issue",
+		description: "Add a comment to an existing artemis issue.",
+		parameters: Type.Object({
+			issueId: Type.String({ description: "ID of the issue to comment on" }),
+			body: Type.String({ description: "Comment text" }),
+		}),
+
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const cmdString = `git artemis add ${params.issueId} (with EDITOR)`;
+			onUpdate?.({ content: [{ type: "text", text: `Running: ${cmdString}` }] });
+
+			const result = await runWithEditor(pi, ["add", params.issueId], { BODY: params.body }, signal, ctx.cwd);
+			if (signal?.aborted) return cancelledResult(cmdString);
+
+			const stdout = result.stdout.trim();
+			const stderr = result.stderr.trim();
+			return execResult(cmdString, stdout, stderr, result.code, "Comment added");
+		},
+
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", "comment") + " " + theme.fg("muted", args.issueId),
+				0, 0,
+			);
+		},
+
+		renderResult(result, _opts, theme) {
+			const details = result.details as ArtemisDetails | undefined;
+			if (!details) return new Text(result.content[0]?.type === "text" ? result.content[0].text : "", 0, 0);
+			if (details.exitCode !== 0) return new Text(theme.fg("error", `✗ ${details.stderr || details.stdout}`), 0, 0);
+
+			return new Text(theme.fg("success", "✓ ") + theme.fg("muted", details.stdout || "Comment added"), 0, 0);
+		},
+	});
+
+	// ── show_issue ───────────────────────────────────────────────────────────────
+
+	pi.registerTool({
+		name: "show_issue",
+		label: "Show Issue",
+		description: "Show an artemis issue. Optionally pass commentNumber to show a specific comment (0-indexed).",
+		parameters: Type.Object({
+			issueId: Type.String({ description: "ID of the issue to show" }),
+			commentNumber: Type.Optional(Type.Number({ description: "Comment number to show (0-indexed)" })),
+		}),
+
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const args = ["show", params.issueId];
+			if (params.commentNumber !== undefined) args.push(String(params.commentNumber));
+			const cmdString = `git artemis ${args.join(" ")}`;
+			onUpdate?.({ content: [{ type: "text", text: `Running: ${cmdString}` }] });
+
+			const result = await pi.exec("git", ["artemis", ...args], { signal, cwd: ctx.cwd });
+			if (signal?.aborted) return cancelledResult(cmdString);
+
+			const stdout = result.stdout.trim();
+			const stderr = result.stderr.trim();
+			return execResult(cmdString, stdout, stderr, result.code, "No output");
+		},
+
+		renderCall(args, theme) {
+			let text = theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", "show") + " " + theme.fg("muted", args.issueId);
+			if (args.commentNumber !== undefined) text += theme.fg("dim", ` #${args.commentNumber}`);
 			return new Text(text, 0, 0);
 		},
 
 		renderResult(result, { expanded }, theme) {
 			const details = result.details as ArtemisDetails | undefined;
+			if (!details) return new Text(result.content[0]?.type === "text" ? result.content[0].text : "", 0, 0);
+			if (details.exitCode !== 0) return new Text(theme.fg("error", `✗ ${details.stderr || details.stdout}`), 0, 0);
 
-			if (!details) {
-				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "", 0, 0);
-			}
+			const lines = details.stdout.split("\n");
+			const displayLines = expanded ? lines : lines.slice(0, 8);
+			let text = theme.fg("success", "✓") + "\n" + theme.fg("muted", displayLines.join("\n"));
+			if (!expanded && lines.length > 8) text += "\n" + theme.fg("dim", `... ${lines.length - 8} more lines`);
+			return new Text(text, 0, 0);
+		},
+	});
 
-			const success = details.exitCode === 0;
-			const output = details.stdout || details.stderr;
+	// ── close_issue ──────────────────────────────────────────────────────────────
 
-			if (!success) {
-				return new Text(theme.fg("error", `✗ ${output}`), 0, 0);
-			}
+	pi.registerTool({
+		name: "close_issue",
+		label: "Close Issue",
+		description: "Close an artemis issue (sets state=resolved, resolution=fixed) and add a closing comment.",
+		parameters: Type.Object({
+			issueId: Type.String({ description: "ID of the issue to close" }),
+			body: Type.String({ description: "Closing comment text" }),
+		}),
 
-			// For list command
-			if (details.command.includes("list")) {
-				if (!output) {
-					return new Text(theme.fg("dim", "No issues found"), 0, 0);
-				}
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const args = ["add", params.issueId, "-p", "state=resolved", "-p", "resolution=fixed"];
+			const cmdString = `git artemis ${args.join(" ")} (with EDITOR)`;
+			onUpdate?.({ content: [{ type: "text", text: `Running: ${cmdString}` }] });
 
-				const lines = output.split("\n").filter(l => l.trim());
-				const displayLines = expanded ? lines : lines.slice(0, 10);
+			const result = await runWithEditor(pi, args, { BODY: params.body }, signal, ctx.cwd);
+			if (signal?.aborted) return cancelledResult(cmdString);
 
-				let text = theme.fg("success", "✓ ") + theme.fg("muted", `${lines.length} issue(s):`);
-				for (const line of displayLines) {
-					// Highlight issue IDs
-					const highlighted = line.replace(/([a-f0-9]{16})/g, (id) => theme.fg("accent", id));
-					text += "\n" + theme.fg("muted", highlighted);
-				}
+			const stdout = result.stdout.trim();
+			const stderr = result.stderr.trim();
+			return execResult(cmdString, stdout, stderr, result.code, "Issue closed");
+		},
 
-				if (!expanded && lines.length > 10) {
-					text += "\n" + theme.fg("dim", `... ${lines.length - 10} more`);
-				}
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("artemis ")) + theme.fg("accent", "close") + " " + theme.fg("muted", args.issueId),
+				0, 0,
+			);
+		},
 
-				return new Text(text, 0, 0);
-			}
+		renderResult(result, _opts, theme) {
+			const details = result.details as ArtemisDetails | undefined;
+			if (!details) return new Text(result.content[0]?.type === "text" ? result.content[0].text : "", 0, 0);
+			if (details.exitCode !== 0) return new Text(theme.fg("error", `✗ ${details.stderr || details.stdout}`), 0, 0);
 
-			// For show command
-			if (details.command.includes("show")) {
-				const lines = output.split("\n");
-				const displayLines = expanded ? lines : lines.slice(0, 8);
-
-				let text = theme.fg("success", "✓");
-				text += "\n" + theme.fg("muted", displayLines.join("\n"));
-
-				if (!expanded && lines.length > 8) {
-					text += "\n" + theme.fg("dim", `... ${lines.length - 8} more lines`);
-				}
-
-				return new Text(text, 0, 0);
-			}
-
-			// For add/close commands - extract issue ID if present
-			if (details.command.includes("add")) {
-				const issueIdMatch = output.match(/([a-f0-9]{16})/);
-				if (issueIdMatch) {
-					const issueId = theme.fg("accent", issueIdMatch[1]);
-					return new Text(theme.fg("success", "✓ ") + theme.fg("muted", output.replace(issueIdMatch[1], issueId)), 0, 0);
-				}
-			}
-
-			return new Text(theme.fg("success", "✓ ") + theme.fg("muted", output), 0, 0);
+			return new Text(theme.fg("success", "✓ ") + theme.fg("muted", details.stdout || "Issue closed"), 0, 0);
 		},
 	});
 }

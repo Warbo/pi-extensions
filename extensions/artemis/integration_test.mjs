@@ -114,17 +114,31 @@ function streamDummyLLM(
 		try {
 			if (options?.signal?.aborted) throw new Error("Aborted");
 
+			// If any earlier assistant message already made a tool call, we are in the
+			// follow-up turn (pi sent the tool result back to us).  Return plain text
+			// so we don't loop forever.
+			const alreadyCalledTool = context.messages.some(
+				(m) =>
+					m.role === "assistant" &&
+					Array.isArray(m.content) &&
+					m.content.some((c: any) => c.type === "toolCall"),
+			);
+
 			const lastUserMsg = context.messages.findLast((m) => m.role === "user");
 			const userText =
 				typeof lastUserMsg?.content === "string"
 					? lastUserMsg.content
 					: lastUserMsg?.content?.find((c) => c.type === "text")?.text ?? "";
 
-			let response = responses.default || { text: "OK", toolCall: null };
-			for (const [key, value] of Object.entries(responses)) {
-				if (userText.toLowerCase().includes(key.toLowerCase())) {
-					response = value;
-					break;
+			let response: any = responses.default || { text: "OK", toolCall: null };
+			if (alreadyCalledTool) {
+				response = { text: "Done.", toolCall: null };
+			} else {
+				for (const [key, value] of Object.entries(responses)) {
+					if (userText.toLowerCase().includes(key.toLowerCase())) {
+						response = value;
+						break;
+					}
 				}
 			}
 
@@ -139,10 +153,9 @@ function streamDummyLLM(
 			if (response.toolCall) {
 				output.stopReason = "toolUse";
 				const toolCall = {
+					...response.toolCall,
 					type: "toolCall" as const,
 					id: \`call_\${Date.now()}\`,
-					name: "git_artemis",
-					arguments: response.toolCall,
 				};
 				output.content.push(toolCall);
 				stream.push({ type: "toolcall_start", contentIndex: 1, partial: output });
@@ -243,7 +256,10 @@ async function runTest(name, testFn) {
 		const dummyLLM = createDummyLLM(tempDir, {
 			"list issues": {
 				text: "Listing issues",
-				toolCall: { command: "list" }
+				toolCall: {
+					name: "list_issues",
+					arguments: {},
+				}
 			}
 		});
 		
@@ -262,16 +278,11 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "list issues" });
 		
 		const toolStart = await waitForEvent(events,
-			e => e.type === "tool_execution_start" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_start" && e.toolName === "list_issues"
 		);
 		
-		if (toolStart.args.command !== "list") {
-			pi.kill();
-			return "Expected command to be 'list'";
-		}
-		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "list_issues"
 		);
 		
 		pi.kill();
@@ -284,12 +295,14 @@ async function runTest(name, testFn) {
 	// Test: Add issue creates new issue
 	await runTest("Add command creates new issue", async (tempDir) => {
 		const dummyLLM = createDummyLLM(tempDir, {
-			"create issue": {
+			"new issue": {
 				text: "Creating issue",
 				toolCall: {
-					command: "add",
-					subject: "Test Bug",
-					body: "This is a test issue for the integration test"
+					name: "new_issue",
+					arguments: {
+						subject: "Test Bug",
+						body: "This is a test issue for the integration test",
+					}
 				}
 			}
 		});
@@ -306,10 +319,10 @@ async function runTest(name, testFn) {
 		});
 		
 		await new Promise(resolve => setTimeout(resolve, 500));
-		sendCommand(pi, { type: "prompt", message: "create issue" });
+		sendCommand(pi, { type: "prompt", message: "new issue" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "new_issue"
 		);
 		
 		pi.kill();
@@ -361,8 +374,10 @@ async function runTest(name, testFn) {
 			"show issue": {
 				text: "Showing issue",
 				toolCall: {
-					command: "show",
-					issueId: issueId
+					name: "show_issue",
+					arguments: {
+						issueId: issueId,
+					}
 				}
 			}
 		});
@@ -382,7 +397,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "show issue" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "show_issue"
 		);
 		
 		pi.kill();
@@ -423,9 +438,11 @@ async function runTest(name, testFn) {
 			"close issue": {
 				text: "Closing issue",
 				toolCall: {
-					command: "close",
-					issueId: issueId,
-					closeCommentBody: "Closing in integration test"
+					name: "close_issue",
+					arguments: {
+						issueId: issueId,
+						body: "Closing in integration test",
+					}
 				}
 			}
 		});
@@ -445,7 +462,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "close issue" });
 		
 		await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "close_issue"
 		);
 		
 		pi.kill();
@@ -504,8 +521,10 @@ async function runTest(name, testFn) {
 			"list all": {
 				text: "Listing all issues",
 				toolCall: {
-					command: "list",
-					all: true
+					name: "list_issues",
+					arguments:{
+						all: true,
+					}
 				}
 			}
 		});
@@ -525,7 +544,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "list all" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "list_issues"
 		);
 		
 		pi.kill();
@@ -547,9 +566,11 @@ async function runTest(name, testFn) {
 			"create issue": {
 				text: "Creating issue with body",
 				toolCall: {
-					command: "add",
-					subject: "Body Test Issue",
-					body: testBody
+					name: "new_issue",
+					arguments: {
+						subject: "Body Test Issue",
+						body: testBody,
+					}
 				}
 			}
 		});
@@ -569,7 +590,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "create issue" });
 		
 		const toolEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "new_issue"
 		);
 		
 		pi.kill();
@@ -618,16 +639,20 @@ async function runTest(name, testFn) {
 			"create issue with body": {
 				text: "Creating issue",
 				toolCall: {
-					command: "add",
-					subject: "Auth Bug",
-					body: testBody
+					name: "new_issue",
+					arguments: {
+						subject: "Auth Bug",
+						body: testBody,
+					}
 				}
 			},
 			"show the issue": {
 				text: "Showing issue",
 				toolCall: {
-					command: "show",
-					issueId: "placeholder" // Will be replaced below
+					name: "show_issue",
+					arguments: {
+						issueId: "placeholder", // Will be replaced below
+					}
 				}
 			}
 		});
@@ -649,7 +674,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "create issue with body" });
 		
 		const addEnd = await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis" && e.result?.details?.command?.includes("add")
+			e => e.type === "tool_execution_end" && e.toolName === "new_issue"
 		);
 		
 		// Extract issue ID
@@ -669,8 +694,10 @@ async function runTest(name, testFn) {
 			"show the issue": {
 				text: "Showing issue",
 				toolCall: {
-					command: "show",
-					issueId: issueId
+					name: "show_issue",
+					arguments: {
+						issueId: issueId,
+					}
 				}
 			}
 		});
@@ -694,7 +721,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi2, { type: "prompt", message: "show the issue" });
 		
 		const showEnd = await waitForEvent(events2,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "show_issue"
 		);
 		
 		pi2.kill();
@@ -742,9 +769,11 @@ async function runTest(name, testFn) {
 			"add comment": {
 				text: "Adding comment",
 				toolCall: {
-					command: "add",
-					issueId: issueId,
-					commentBody: commentBody
+					name: "comment_issue",
+					arguments: {
+						issueId: issueId,
+						body: commentBody,
+					}
 				}
 			}
 		});
@@ -764,7 +793,7 @@ async function runTest(name, testFn) {
 		sendCommand(pi, { type: "prompt", message: "add comment" });
 		
 		await waitForEvent(events,
-			e => e.type === "tool_execution_end" && e.toolName === "git_artemis"
+			e => e.type === "tool_execution_end" && e.toolName === "comment_issue"
 		);
 		
 		pi.kill();

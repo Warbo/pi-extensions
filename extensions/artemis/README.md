@@ -4,12 +4,12 @@ A pi extension that integrates the artemis git-based issue tracker, allowing the
 
 ## Overview
 
-The artemis extension provides a `git_artemis` tool that wraps the `git artemis` command, enabling the LLM to:
+The artemis extension provides five tools that wrap the `git artemis` command, enabling the LLM to:
 
 - **Track issues**: Create and manage issues as the LLM discovers problems
 - **Log information**: Document findings about known issues
 - **Manage tasks**: Find and track TODOs directly in the repository
-- **Update status**: Close or update issue properties as work progresses
+- **Update status**: Close or comment on issues as work progresses
 
 ## Prerequisites
 
@@ -51,73 +51,69 @@ pi -e /path/to/extensions/artemis/index.ts
 
 ## Usage
 
-The extension provides a single tool: `git_artemis` that wraps the git artemis CLI.
+The extension provides five tools, one per operation.
 
-### Commands
+### Tools
 
-#### List Issues (`git artemis list`)
+#### `list_issues` (`git artemis list`)
 
 Lists issues with `state=new` by default:
 
 ```
-List new issues (default):
-git_artemis(command="list")
+List open issues (default):
+list_issues()
 
-List all issues:
-git_artemis(command="list", all=true)
+List all issues including resolved:
+list_issues(all=true)
 ```
 
-#### Create Issue (`git artemis add`)
+#### `new_issue` (`git artemis add`)
 
 Creates a new issue with subject and body:
 
 ```
-git_artemis(
-    command="add",
+new_issue(
     subject="Memory leak in worker process",
     body="Observed when processing large files over 1GB. Memory usage grows unbounded and never gets freed."
 )
 ```
 
-#### Add Comment (`git artemis add <id>`)
+#### `comment_issue` (`git artemis add <id>`)
 
-Adds a comment to an existing issue. The subject line is left unchanged (inherited
-from the original issue); only `commentBody` is required — do not pass `subject`:
+Adds a comment to an existing issue. The subject line is left unchanged
+(inherited from the original issue); only the issue ID and comment `body`
+are required:
 
 ```
-git_artemis(
-    command="add",
+comment_issue(
     issueId="abc1234",
-    commentBody="Found the root cause - circular reference in cache invalidation"
+    body="Found the root cause - circular reference in cache invalidation"
 )
 ```
 
-#### Show Issue (`git artemis show <id>`)
+#### `show_issue` (`git artemis show <id>`)
 
 Shows an issue (without comments):
 
 ```
-git_artemis(command="show", issueId="abc1234")
+show_issue(issueId="abc1234")
 ```
 
-#### Show Comment (`git artemis show <id> <n>`)
-
-Shows a specific comment:
+Optionally pass `commentNumber` to show a specific comment (0-indexed):
 
 ```
-git_artemis(command="show", issueId="abc1234", commentNumber=0)
+show_issue(issueId="abc1234", commentNumber=0)
 ```
 
-#### Close Issue (`git artemis add <id> -p state=resolved -p resolution=fixed`)
+#### `close_issue` (`git artemis add <id> -p state=resolved -p resolution=fixed`)
 
-Closes an issue and adds a closing comment. `closeCommentBody` is required;
-like all comments, the subject line is left unchanged:
+Closes an issue and adds a closing comment. Like all comments, the subject
+line is left unchanged:
 
 ```
-git_artemis(
-    command="close",
+close_issue(
     issueId="abc1234",
-    closeCommentBody="Fixed in commit abc1234 — circular reference removed"
+    body="Fixed in commit abc1234 — circular reference removed"
 )
 ```
 
@@ -130,8 +126,7 @@ When the LLM finds an issue during code review:
 ```
 User: "Review the authentication code for security issues"
 
-LLM: [uses git_artemis(
-    command="add",
+LLM: [uses new_issue(
     subject="SQL injection in auth module",
     body="Found potential SQL injection in user_login() function at line 42. User input is concatenated directly into query."
 )]
@@ -145,7 +140,7 @@ Finding work to do:
 ```
 User: "What issues need attention?"
 
-LLM: [uses git_artemis(command="list")]
+LLM: [uses list_issues()]
 "There are 3 open issues:
 1. abc1234 - SQL injection in auth
 2. def5678 - Memory leak in worker
@@ -159,10 +154,9 @@ Documenting findings on an issue:
 ```
 User: "I found the cause of issue def5678"
 
-LLM: [uses git_artemis(
-    command="add",
+LLM: [uses comment_issue(
     issueId="def5678",
-    commentBody="Root cause identified: circular reference in cache.invalidate() prevents garbage collection. Fix requires breaking the cycle."
+    body="Root cause identified: circular reference in cache.invalidate() prevents garbage collection. Fix requires breaking the cycle."
 )]
 "I've added your findings to issue def5678."
 ```
@@ -174,10 +168,9 @@ After fixing a problem:
 ```
 User: "I've fixed the memory leak"
 
-LLM: [uses git_artemis(
-    command="close",
+LLM: [uses close_issue(
     issueId="def5678",
-    closeCommentBody="Fixed by breaking the circular reference in cache.invalidate()"
+    body="Fixed by breaking the circular reference in cache.invalidate()"
 )]
 "Great! I've closed issue def5678 and marked it as resolved/fixed."
 ```
@@ -185,18 +178,18 @@ LLM: [uses git_artemis(
 ## Tips
 
 1. **Be specific**: Provide detailed subject and body when creating issues
-2. **Check existing**: Use `list` to see existing issues before creating duplicates
-3. **Add context**: Use comments to add investigation notes, findings, or progress updates
+2. **Check existing**: Use `list_issues` to see existing issues before creating duplicates
+3. **Add context**: Use `comment_issue` to add investigation notes, findings, or progress updates
 4. **Reference commits**: Include commit hashes in issue bodies or comments when relevant
-5. **Close when done**: Use the `close` command when issues are resolved
+5. **Close when done**: Use `close_issue` when issues are resolved
 
 ## Issue States
 
-Issues start with `state=new` and can be closed with the `close` command, which sets:
+Issues start with `state=new` and can be closed with `close_issue`, which sets:
 - `state=resolved`
 - `resolution=fixed`
 
-This is the only state transition exposed by the tool. For other property management, use the `git artemis` command directly from your shell.
+This is the only state transition exposed by the tools. For other property management, use the `git artemis` command directly from your shell.
 
 ## Rendering
 
@@ -210,7 +203,7 @@ The extension provides custom TUI rendering:
 ## Limitations
 
 - Cannot handle binary attachments
-- No support for custom properties (only state=resolved/resolution=fixed via `close`)
+- No support for custom properties (only state=resolved/resolution=fixed via `close_issue`)
 - No support for date filters or `.issues/.filter*` files
 - Requires a git repository with artemis initialized
 
@@ -241,8 +234,7 @@ nix-env -iA nixpkgs.artemis
 This is normal for a fresh repository. Create your first issue:
 
 ```
-git_artemis(
-    command="add",
+new_issue(
     subject="First issue",
     body="Testing artemis integration"
 )
