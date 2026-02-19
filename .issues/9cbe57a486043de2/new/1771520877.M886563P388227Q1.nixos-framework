@@ -1,0 +1,72 @@
+From: Chris Warburton
+Date: Thu, 19 Feb 2026 17:07:57 +0000
+State: new
+Subject: Documentation outdated: missing write tool and span parameter docs, incorrect return format for emacs_ts_query
+Message-Id: <9cbe57a486043de2-0-artemis@nixos-framework>
+
+The README for the emacsclient extension has several documentation gaps
+and inaccuracies:
+
+## 1. Missing tool documentation: `write` tool
+
+The `write` tool is fully implemented in `index.ts` and has
+comprehensive tests (`write-tool.test.ts`), but it is completely absent
+from the README's "Tools" section.
+
+**Implementation details in code:**
+- Parameters: `name` (required), `insert` (optional), `type` (optional), `pos`
+  (optional), `line` (optional), `point` (optional), `replace` (optional),
+  `save` (optional, default: true), `temp` (optional)
+- Description: "Insert text into Emacs buffer at a specific position, and/or
+  type a key sequence. Can create new files/buffers, move point, insert content,
+  type keys, and save."
+- Extensive docstring exists in `elisp.ts` documenting the `buildWriteElisp`
+  function
+
+**Action needed:** Add a complete "### `write`" section to the README
+documenting this tool, including parameters, return values, and examples.
+
+## 2. Missing parameter documentation for `read` tool
+
+The `span` parameter is implemented in the `read` tool but not documented in the
+README.
+
+**Implementation details:**
+- Parameter: `span` (optional): "Narrow to a span ID (result of a previous
+  read)."
+- Fully implemented in `buildReadElisp` function with span narrowing logic
+- Returns span IDs and span data in the response when available
+
+**Action needed:** Add `span` parameter to the read tool documentation in the
+README.
+
+## 3. Inaccurate return format documentation for `emacs_ts_query`
+
+The README documents the return format as "Array of results (one per match)",
+but the actual implementation returns an object.
+
+**Current documentation:**
+```
+**Returns:** Array of results (one per match)
+```
+
+**Actual return format in code (index.ts lines ~217-219):**
+```typescript
+const results = result.data as string[];
+const text = JSON.stringify({ results, count: results.length }, null, 2);
+```
+
+Returns: `{ results: string[], count: number }`
+
+**Action needed:** Update the README to accurately document the return format as
+an object containing `results` (array) and `count` (number).
+
+## Files to update:
+- `extensions/emacsclient/README.md` - Add write tool section, add span
+  parameter to read tool docs, fix emacs_ts_query return format documentation
+
+## References:
+- Implementation: `extensions/emacsclient/index.ts` (lines 161-226 for write
+  tool registration, line 217 for return format)
+- Tests: `extensions/emacsclient/write-tool.test.ts`
+- Elisp builders: `extensions/emacsclient/elisp.ts`
