@@ -527,8 +527,10 @@ export function buildReadElisp(
  *
  * This generates an elisp expression that:
  * - Opens/finds a buffer by path or name
+ * - Optionally clears the buffer contents
  * - Optionally moves point to a specific position
- * - Inserts text at that position
+ * - Optionally inserts text at that position
+ * - Optionally simulates a sequence of key presses
  * - Optionally saves the buffer
  * - Optionally restores state (temp mode)
  * - Returns metadata about the operation
