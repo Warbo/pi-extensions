@@ -79,10 +79,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "issues_list",
 		label: "List Issues",
-		description: "List artemis issues. Shows only open issues (state=new) by default; set all=true to include resolved issues.",
+	  description: "List artemis issues (default: only open issues).",
 		parameters: Type.Object({
 			all: Type.Optional(Type.Boolean({
-				description: "Show all issues instead of just state=new (default: false)",
+			  description: "Include closed issues",
 			})),
 		}),
 
@@ -132,10 +132,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "issues_new",
 		label: "New Issue",
-		description: "Create a new artemis issue with a subject line and body text.",
+		description: "Create a new issue with subject line and body.",
 		parameters: Type.Object({
-			subject: Type.String({ description: "Issue subject/title" }),
-			body: Type.String({ description: "Issue body/description" }),
+			subject: Type.String({
+			    description: "Subject/title line",
+			}),
+			body: Type.String({
+			    description: "Full body/description",
+			}),
 		}),
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -175,10 +179,10 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		name: "issues_comment",
-		label: "Comment Issue",
-		description: "Add a comment to an existing artemis issue.",
+		label: "Comment on Issue",
+		description: "Comment on an existing issue.",
 		parameters: Type.Object({
-			issueId: Type.String({ description: "ID of the issue to comment on" }),
+			issueId: Type.String({ description: "ID of issue" }),
 			body: Type.String({ description: "Comment text" }),
 		}),
 
@@ -214,11 +218,15 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		name: "issues_show",
-		label: "Show Issue",
-		description: "Show an artemis issue. Optionally pass commentNumber to show a specific comment (0-indexed).",
+		label: "Show Issue or Comment",
+		description: "Show an issue. Optionally pass commentNumber to show a specific comment (1-indexed).",
 		parameters: Type.Object({
-			issueId: Type.String({ description: "ID of the issue to show" }),
-			commentNumber: Type.Optional(Type.Number({ description: "Comment number to show (0-indexed)" })),
+			issueId: Type.String({
+				description: "ID of issue to show",
+			}),
+			commentNumber: Type.Optional(Type.Number({
+				description: "Comment number to show (0-indexed)",
+			})),
 		}),
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -259,10 +267,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "issues_close",
 		label: "Close Issue",
-		description: "Close an artemis issue (sets state=resolved, resolution=fixed) and add a closing comment.",
+		description: "Close issue, with a comment.",
 		parameters: Type.Object({
-			issueId: Type.String({ description: "ID of the issue to close" }),
-			body: Type.String({ description: "Closing comment text" }),
+			issueId: Type.String({
+				description: "ID of issue to close",
+			}),
+			body: Type.String({
+				description: "Comment/reason",
+			}),
 		}),
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
