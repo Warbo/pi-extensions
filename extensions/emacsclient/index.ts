@@ -102,10 +102,9 @@ export default function (pi: ExtensionAPI) {
     name: "emacs_eval",
     label: "Emacs Eval",
     description:
-      "Eval a small ELisp expression in our long-running Emacs session and " +
-        "return its result. Do not use for big expressions (write those in " +
-        "buffers instead). Emacs buffers can be used to store state." +
-        "Use other tools where possible; this is to complement them.",
+      "Eval a SMALL ELisp expression in our long-running Emacs session and " +
+        "return its result. Big expressions should be handled separately, by " +
+        "writing them in buffers/scripts.",
     parameters: Type.Object({
       expression: Type.String({
         description: "Emacs Lisp expression to evaluate",
@@ -142,8 +141,7 @@ export default function (pi: ExtensionAPI) {
     name: "emacs_list_buffers",
     label: "Emacs List Buffers",
     description:
-      "List details of open Emacs buffers. " +
-      "Hidden/internal buffers (names starting with space) are excluded.",
+      "List details of open Emacs buffers.",
     parameters: Type.Object({}),
     async execute(toolCallId, _params, signal) {
       const elisp = buildListBuffersElisp();
@@ -374,9 +372,10 @@ export default function (pi: ExtensionAPI) {
     name: "write",
     label: "Write to File/Buffer",
     description:
-      "Insert text into Emacs buffer at a specific position. Can create new " +
-        "files/buffers, move point, insert content, and save. Old content " +
-        "remains, unless 'replace' is given!",
+      "Insert text into Emacs buffer at a specific position, and/or type a " +
+        "key sequence. Can create new files/buffers, move point, insert " +
+        "content, type keys, and save. Old content remains, unless 'replace' " +
+        "is given!",
     parameters: Type.Object({
       name: Type.String({
         description:
