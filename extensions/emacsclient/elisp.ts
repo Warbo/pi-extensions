@@ -610,13 +610,13 @@ export function buildWriteElisp(
        (cons "outdated" (if (buffer-file-name)
                           (if (not (verify-visited-file-modtime (current-buffer))) t :json-false)
                         :json-false))
-       (cons "point" (list
-                      (cons "pos" (point))
-                      (cons "line" (line-number-at-pos))
-                      (cons "col" (current-column))))
        (cons "saved" ${save ? 't' : ':json-false'})
        (cons "new" (if was-new t :json-false))
-       (cons "dead" :json-false)))`;
+       (cons "dead" :json-false)
+       (cons "point" (list
+         (cons "pos" (point))
+         (cons "line" (line-number-at-pos))
+         (cons "col" (current-column))))))`;
 
   return `(json-encode
   (let* (;; Track whether buffer was newly opened
