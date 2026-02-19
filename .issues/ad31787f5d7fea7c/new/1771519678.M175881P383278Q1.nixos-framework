@@ -1,0 +1,9 @@
+From: Chris Warburton
+Date: Thu, 19 Feb 2026 16:46:54 +0000
+State: new
+Subject: git_artemis "close" should take comment body
+Message-Id: <ad31787f5d7fea7c-0-artemis@nixos-framework>
+
+Closing an issue will add a comment. At the moment we're not taking any
+body for that comment, so it's always empty. We should add an extra field to the
+"close" command.
