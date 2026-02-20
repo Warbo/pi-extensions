@@ -312,11 +312,11 @@ export function buildReadElisp(
 
   // Position movement: moves point to requested position/line/column
   const movePoint = `
-    ${options.pos !== undefined ? `
+    ${options.pos !== undefined && options.pos !== 0 ? `
     (goto-char (if (< ${options.pos} 0)
                    (max (point-min) (+ (point) ${options.pos}))
                  ${options.pos}))` : ''}
-    ${options.pos === undefined && options.line !== undefined ? `
+    ${(options.pos === undefined || options.pos === 0) && options.line !== undefined ? `
     (let ((target-line ${options.line}))
       (if (< target-line 0)
           (forward-line target-line)

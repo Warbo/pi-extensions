@@ -651,9 +651,23 @@ test("buildReadElisp - handles backslashes in path", () => {
   assertContains(result, "\\\\", "Should escape backslashes");
 });
 
-test("buildReadElisp - handles zero pos", () => {
-  const result = buildReadElisp("test.txt", { pos: 0 });
-  assertContains(result, "0", "Should handle zero position");
+test("buildReadElisp - pos 0 means use current point (no goto-char)", () => {
+  // pos: 0 is documented as "uses point" — same as omitting pos entirely.
+  // The generated elisp must NOT unconditionally move point.
+  const resultWithZero = buildReadElisp("test.txt", { pos: 0 });
+  const resultOmitted  = buildReadElisp("test.txt", {});
+  // Both should behave the same: neither should emit an unconditional goto-char
+  // (a goto-char inside save-excursion/unless is acceptable for internal use).
+  const hasUncondGotoChar = (s: string) =>
+    // Detect a bare (goto-char <literal-number>) not inside save-excursion
+    /\(goto-char\s+\d+\)/.test(s);
+  assert(!hasUncondGotoChar(resultWithZero),
+    "pos:0 should not emit goto-char with a literal position");
+  assert(!hasUncondGotoChar(resultOmitted),
+    "omitted pos should not emit goto-char with a literal position");
+  // The two forms should produce identical elisp
+  assert(resultWithZero === resultOmitted,
+    "pos:0 and omitted pos should produce identical elisp");
 });
 
 test("buildReadElisp - handles zero length", () => {

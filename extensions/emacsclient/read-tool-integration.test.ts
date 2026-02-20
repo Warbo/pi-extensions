@@ -288,6 +288,24 @@ test("read - no position stays at current point", () => {
   assertEqual(result.point.line, 4);
 });
 
+test("read - pos 0 uses current point (same as omitting pos)", () => {
+  // pos: 0 is documented as "Default is 0, which uses point."
+  // It must NOT move point to position 0/1 (beginning of buffer).
+  // Position at line 5
+  emacsclient(`(progn (find-file "${testFile}") (goto-line 5))`);
+
+  // Read with explicit pos: 0
+  const elisp = buildReadElisp(testFile, { pos: 0, length: 10 });
+  const result = emacsclientParsed(elisp);
+
+  assertEqual(result.point.line, 5,
+    "pos:0 should leave point at line 5, not move it to the start");
+
+  // Also confirm it reads from line 5 (got.start should match)
+  assertEqual(result.got.start.line, 5,
+    "pos:0 should start reading from current point (line 5)");
+});
+
 // ---------------------------------------------------------------------------
 // Read tool - content extraction tests
 // ---------------------------------------------------------------------------
