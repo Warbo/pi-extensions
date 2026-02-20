@@ -1,21 +1,13 @@
 with {
   inherit (builtins)
     attrValues
-    convertHash
-    getEnv
     mapAttrs
     readDir
     ;
-};
-{
-  artemis ? warbo-packages.artemis,
-  pi ? warbo-packages.pi,
-  pkgs ? warbo-packages.nix-helpers.nixpkgs,
-  warbo-packages ? import (fetchGitIPFS {
-    sha1 = "46e129fc24ef78f2a389f6aa816f30ad4bbfec5c";
-  }) { },
-  fetchGitIPFS ? (
+  defaultFetchGitIPFS =
     with rec {
+      inherit (builtins) convertHash getEnv;
+
       # The version of fetchGitIPFS.nix. Shouldn't need updating often.
       hash = "sha256-Cd+/MvPeFksqi4uZ9SaeHEIHKQH0UJTcl6w65TIw3WA=";
       cid = "f01551220${
@@ -35,8 +27,16 @@ with {
         inherit hash;
         url = "${gateway}/ipfs/${cid}";
       }
-    )
-  ),
+    );
+};
+{
+  artemis ? warbo-packages.artemis,
+  pi ? warbo-packages.pi,
+  pkgs ? warbo-packages.nix-helpers.nixpkgs,
+  warbo-packages ? import (fetchGitIPFS {
+    sha1 = "46e129fc24ef78f2a389f6aa816f30ad4bbfec5c";
+  }) { },
+  fetchGitIPFS ? defaultFetchGitIPFS,
 }:
 with rec {
   make-extension =
@@ -52,7 +52,7 @@ with rec {
           pkgs.tsx
           (pkgs.emacsPackages.emacsWithPackages (
             es:
-            builtins.attrValues {
+            attrValues {
               inherit (es.treesit-grammars) with-all-grammars;
             }
           ))
