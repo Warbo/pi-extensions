@@ -8,17 +8,11 @@ with {
     ;
 };
 {
-  pkgs ? import <nixpkgs> {
-    overlays =
-      with {
-        overlays = import /home/chris/Code/nix-config/overlays.nix;
-      }; [
-        overlays.nix-helpers
-        overlays.numtide-llms
-      ];
-  },
-  artemis ? import (fetchGitIPFS {
-    sha1 = "6ea8036e6c04b73aff045acd0a5c195846454561";
+  artemis ? warbo-packages.artemis,
+  pi ? warbo-packages.pi,
+  pkgs ? warbo-packages.nix-helpers.nixpkgs,
+  warbo-packages ? import (fetchGitIPFS {
+    sha1 = "46e129fc24ef78f2a389f6aa816f30ad4bbfec5c";
   }) { },
   fetchGitIPFS ? (
     with rec {
@@ -51,14 +45,17 @@ with rec {
       {
         buildInputs = [
           artemis
-          (pkgs.emacsPackages.emacsWithPackages (es: builtins.attrValues {
-            inherit (es.treesit-grammars) with-all-grammars;
-          }))
+          pi
           pkgs.git
-          pkgs.llm-agents.pi
           pkgs.nodePackages.typescript
           pkgs.nodejs_20
           pkgs.tsx
+          (pkgs.emacsPackages.emacsWithPackages (
+            es:
+            builtins.attrValues {
+              inherit (es.treesit-grammars) with-all-grammars;
+            }
+          ))
         ];
       }
       ''
@@ -77,5 +74,5 @@ rec {
 
   extensions = mapAttrs (name: _: make-extension name) (readDir ./extensions);
 
-  SYSTEM = pkgs.callPackage ./SYSTEM.nix { inherit (pkgs.llm-agents) pi; };
+  SYSTEM = pkgs.callPackage ./SYSTEM.nix { inherit pi; };
 }
