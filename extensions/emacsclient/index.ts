@@ -109,9 +109,9 @@ export default function (pi: ExtensionAPI) {
     name: "emacs_eval",
     label: "Emacs Eval",
     description:
-      "Eval a SMALL ELisp expression in our long-running Emacs session and " +
-        "return its result. Big expressions should be handled separately, by " +
-        "writing them in buffers/scripts.",
+      "Eval SMALL ELisp expression in the long-running Emacs session & " +
+        "return result (put big exprs in buffers instead!). Combine with " +
+        "read/write to use search, EWW, eglot, etc.",
     parameters: Type.Object({
       expression: Type.String({
         description: "Emacs Lisp expression to evaluate",
