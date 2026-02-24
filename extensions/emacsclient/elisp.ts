@@ -571,7 +571,7 @@ export function buildWriteElisp(
 
   const isPath = name.includes('/');
   const temp = options.temp ?? false;
-  const save = options.save ?? false;
+  const save = options.save ?? true;
 
   // Build the elisp expression with save-excursion wrapper if temp is true
   const mainBody = `
