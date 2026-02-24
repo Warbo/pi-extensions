@@ -1,0 +1,20 @@
+From: Chris Warburton
+Date: Tue, 24 Feb 2026 16:07:30 +0000
+Subject: Re: emacsclient: make buffer/path guessing stricter
+Message-Id: <e7a41455e319be3e-c172f124654c1832-artemis@nixos-framework>
+References: <e7a41455e319be3e-0-artemis@nixos-framework>
+In-Reply-To: <e7a41455e319be3e-0-artemis@nixos-framework>
+
+Implemented in `elisp.ts` and `index.ts`:
+
+- `isPath` now requires a leading `/`, `./`, or `../` (not just any `/` anywhere)
+- Buffer-name fallback when no existing buffer found:
+  - Name contains special chars (`*`, `/`, `<`, `>`) → `get-buffer-create` (no file association)
+  - Plain name → `find-file-noselect "./<name>"` (file-associated, as if preceded by `./`)
+- Removed now-redundant `(is-path ...)` let* binding from generated elisp
+- Updated `name` parameter descriptions in both `read` and `write` tools, mentioning `*name*` convention for temp buffers
+- `write` already used `(when (buffer-file-name) (save-buffer))`, so save-only-if-file was already correct
+- Added 18 new unit tests covering all classification cases
+- Updated stale test "save default does not save" → "save default saves when buffer has file"
+
+All 374 tests pass.

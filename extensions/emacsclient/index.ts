@@ -246,8 +246,9 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       name: Type.String({
         description:
-          "Treated as a path if it contains a '/' (relative can use './'), " +
-            "otherwise as a buffer name. Supports TRAMP paths.",
+          "Begin '/', './' or '../' for paths (inc. TRAMP); else is a buffer " +
+            "name. New buffer opened if needed. '*', '/', '<' or '>' gets no " +
+            "file ('*foo*' convention), else treated like './' prefix.",
       }),
       span: Type.Optional(
         Type.String({
@@ -386,8 +387,9 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       name: Type.String({
         description:
-          "Treated as path if contains '/', otherwise a buffer name. " +
-          "Relative paths can use './'. Supports TRAMP paths.",
+          "Begin '/', './' or '../' for paths (inc. TRAMP); else is a buffer " +
+            "name. New buffer opened if needed. '*', '/', '<' or '>' gets no " +
+            "file ('*foo*' convention), else treated like './' prefix.",
       }),
       insert: Type.Optional(Type.String({
         description: "Text to insert at the specified position.",

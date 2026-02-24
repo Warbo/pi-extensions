@@ -231,7 +231,10 @@ export function buildReadElisp(
   } = {},
   maxLength: number = 51200
 ): string {
-  const isPath = name.includes('/');
+  // A name is a path if it starts with /, ./, or ../
+  const isPath = name.startsWith('/') || name.startsWith('./') || name.startsWith('../');
+  // A buffer name containing special chars should NOT be file-associated when newly created
+  const bufferHasSpecialChars = /[/*<>]/.test(name);
   const temp = options.temp ?? false;
 
   // Determine the effective length to read
@@ -242,18 +245,23 @@ export function buildReadElisp(
   // Build the elisp expression by composing smaller, verifiable chunks
   // Each chunk is a self-contained piece of Elisp that's easier to validate
 
-  const getOrCreateBuffer = `
-    (if is-path
-      ;; Path: use find-file or find-buffer-visiting
-      (or (find-buffer-visiting "${escapeElispString(name)}")
-          (progn
-            (setq was-new t)
-            (find-file-noselect "${escapeElispString(name)}")))
-      ;; Buffer name: get-buffer or create via find-file
-      (or (get-buffer "${escapeElispString(name)}")
-          (progn
-            (setq was-new t)
-            (find-file-noselect "${escapeElispString(name)}"))))
+  const getOrCreateBuffer = isPath ? `
+    ;; Path: use find-file or find-buffer-visiting
+    (or (find-buffer-visiting "${escapeElispString(name)}")
+        (progn
+          (setq was-new t)
+          (find-file-noselect "${escapeElispString(name)}")))
+  ` : `
+    ;; Buffer name: get existing buffer or create new one
+    (or (get-buffer "${escapeElispString(name)}")
+        (progn
+          (setq was-new t)
+          ${bufferHasSpecialChars
+            // Special chars (*, /, <, >) => create bare buffer with no file association
+            ? `(get-buffer-create "${escapeElispString(name)}")`
+            // Plain name => treat as relative path (as if preceded by ./)
+            : `(find-file-noselect "./${escapeElispString(name)}")`
+          }))
   `;
   const allSpans = `
     (when (or ${options.span !== undefined ? 't' : 'nil'}
@@ -459,8 +467,6 @@ export function buildReadElisp(
          (was-new nil)
          ;; Track original point (for temp mode)
          (original-point nil)
-         ;; Determine if name is a path or buffer name
-         (is-path ${isPath ? 't' : 'nil'})
          ;; Get or create the buffer
          (buf ${getOrCreateBuffer}))
     (with-current-buffer buf
@@ -569,7 +575,10 @@ export function buildWriteElisp(
     );
   }
 
-  const isPath = name.includes('/');
+  // A name is a path if it starts with /, ./, or ../
+  const isPath = name.startsWith('/') || name.startsWith('./') || name.startsWith('../');
+  // A buffer name containing special chars should NOT be file-associated when newly created
+  const bufferHasSpecialChars = /[/*<>]/.test(name);
   const temp = options.temp ?? false;
   const save = options.save ?? true;
 
@@ -624,20 +633,23 @@ export function buildWriteElisp(
   return `(json-encode
   (let* (;; Track whether buffer was newly opened
          (was-new nil)
-         ;; Determine if name is a path or buffer name
-         (is-path ${isPath ? 't' : 'nil'})
          ;; Get or create the buffer
-         (buf (if is-path
+         (buf ${isPath ? `
                   ;; Path: use find-file or find-buffer-visiting
                   (or (find-buffer-visiting "${escapeElispString(name)}")
                       (progn
                         (setq was-new t)
-                        (find-file-noselect "${escapeElispString(name)}")))
-                ;; Buffer name: get-buffer or create via find-file
-                (or (get-buffer "${escapeElispString(name)}")
-                    (progn
-                      (setq was-new t)
-                      (find-file-noselect "${escapeElispString(name)}")))))
+                        (find-file-noselect "${escapeElispString(name)}")))` : `
+                  ;; Buffer name: get existing buffer or create new one
+                  (or (get-buffer "${escapeElispString(name)}")
+                      (progn
+                        (setq was-new t)
+                        ${bufferHasSpecialChars
+                          // Special chars => create bare buffer with no file association
+                          ? `(get-buffer-create "${escapeElispString(name)}")`
+                          // Plain name => treat as relative path (as if preceded by ./)
+                          : `(find-file-noselect "./${escapeElispString(name)}")`
+                        }))`})
          ;; Perform the operation and get result
          (result ${temp ? `(save-excursion${mainBody})` : mainBody}))
     ;; In temp mode, kill newly created buffers

@@ -51,7 +51,7 @@ export EMACSCLIENT_BINARY=/custom/path/to/emacsclient
 Read the content and metadata of a file or Emacs buffer.
 
 **Parameters:**
-- `name` (required): File path (if contains `/`) or buffer name
+- `name` (required): Path if it starts with `/` (absolute) or `./`/`../` (relative); otherwise a buffer name. If no buffer with that name exists: names with special chars (`*`, `/`, `<`, `>`) create a bare buffer with no file association (use `*name*` for temp buffers); plain names open/create a file as if preceded by `./`. Supports TRAMP paths.
 - `pos` (optional): Character position to start reading (1-indexed, or negative for relative to point)
 - `line` (optional): Line number to start reading
 - `col` (optional): Column number (used with `line`)
@@ -70,7 +70,7 @@ read({ name: "./src/main.ts", pos: 1, length: 1000 })
 read({ name: "./src/main.ts", length: 1000 })
 
 // Read 50 lines starting from line 100
-read({ name: "main.ts", line: 100, lines: 50 })
+read({ name: "./main.ts", line: 100, lines: 50 })
 
 // Peek at a file without affecting Emacs state
 read({ name: "./config.json", temp: true })
@@ -83,7 +83,7 @@ read({ name: "./config.json", span: "span-id-from-previous-read" })
 Insert text into Emacs buffer at a specific position, and optionally type a key sequence. Can create new files/buffers, move point, insert content, type keys, and save.
 
 **Parameters:**
-- `name` (required): File path (if contains `/`) or buffer name. Supports TRAMP paths
+- `name` (required): Path if it starts with `/` (absolute) or `./`/`../` (relative); otherwise a buffer name. If no buffer with that name exists: names with special chars (`*`, `/`, `<`, `>`) create a bare buffer with no file association (use `*name*` for temp buffers); plain names open/create a file as if preceded by `./`. Supports TRAMP paths.
 - `insert` (optional): Text to insert at the specified position
 - `pos` (optional): Position to insert at (1-indexed, or negative for relative to end). Conflicts with `line`, `point`, `replace`
 - `line` (optional): Line number to insert at (1-indexed, or negative for relative to end). Conflicts with `pos`, `point`, `replace`
@@ -109,8 +109,8 @@ write({ name: "./src/main.ts", insert: "// TODO: review\n", point: true, save: t
 // Create a new file with content
 write({ name: "./newfile.txt", insert: "Hello, world!", replace: true })
 
-// Replace entire buffer content
-write({ name: "scratch", insert: "Fresh content", replace: true })
+// Replace entire buffer content (use *name* for a bare buffer with no file association)
+write({ name: "*pi-scratch*", insert: "Fresh content", replace: true })
 
 // Insert without affecting Emacs state
 write({ name: "./config.json", insert: "new config", pos: 1, temp: true })

@@ -11,6 +11,8 @@ import {
   buildListBuffersElisp,
   buildTsQueryElisp,
   buildEvalElisp,
+  buildReadElisp,
+  buildWriteElisp,
   parseEmacsclientOutput,
   parseEmacsclientError,
 } from "./elisp.ts";
@@ -703,6 +705,119 @@ test("realistic - markdown with various characters", () => {
   
   const parsed = parseEmacsclientOutput(elispStr);
   assertEqual(parsed.content, markdown);
+});
+
+// ---------------------------------------------------------------------------
+// buildReadElisp / buildWriteElisp - name classification (path vs buffer)
+// ---------------------------------------------------------------------------
+
+// Helper: check if elisp uses find-buffer-visiting (path mode)
+function usesPathMode(elisp: string): boolean {
+  return elisp.includes('find-buffer-visiting');
+}
+
+// Helper: check if elisp uses get-buffer-create (bare buffer, no file association)
+function usesGetBufferCreate(elisp: string): boolean {
+  return elisp.includes('get-buffer-create');
+}
+
+// Helper: check if elisp uses find-file-noselect with "./" prefix (relative file)
+function usesRelativeFileFallback(elisp: string): boolean {
+  return elisp.includes('find-file-noselect "./' );
+}
+
+test("buildReadElisp - absolute path (/) treated as path", () => {
+  const elisp = buildReadElisp("/home/user/file.txt");
+  assert(usesPathMode(elisp), "Should use find-buffer-visiting for absolute paths");
+  assert(!usesGetBufferCreate(elisp), "Should not use get-buffer-create for paths");
+});
+
+test("buildReadElisp - relative path (./) treated as path", () => {
+  const elisp = buildReadElisp("./myfile.txt");
+  assert(usesPathMode(elisp), "Should use find-buffer-visiting for ./ paths");
+});
+
+test("buildReadElisp - relative path (../) treated as path", () => {
+  const elisp = buildReadElisp("../other/file.ts");
+  assert(usesPathMode(elisp), "Should use find-buffer-visiting for ../ paths");
+});
+
+test("buildReadElisp - name with slash not at start treated as buffer name", () => {
+  const elisp = buildReadElisp("foo/bar");
+  assert(!usesPathMode(elisp), "Should NOT use find-buffer-visiting for 'foo/bar'");
+  // Has / so it's a special-char buffer name => get-buffer-create
+  assert(usesGetBufferCreate(elisp), "Should use get-buffer-create (/ is special char)");
+});
+
+test("buildReadElisp - *starred* buffer name uses get-buffer-create (no file)", () => {
+  const elisp = buildReadElisp("*my-temp-buffer*");
+  assert(!usesPathMode(elisp), "Should not use path mode for starred buffer name");
+  assert(usesGetBufferCreate(elisp), "Should use get-buffer-create for *name*");
+  assert(!usesRelativeFileFallback(elisp), "Should NOT use relative file fallback");
+});
+
+test("buildReadElisp - <buffer> name uses get-buffer-create (no file)", () => {
+  const elisp = buildReadElisp("<special>");
+  assert(usesGetBufferCreate(elisp), "Should use get-buffer-create for <name>");
+});
+
+test("buildReadElisp - plain buffer name uses relative file fallback", () => {
+  const elisp = buildReadElisp("my-notes");
+  assert(!usesPathMode(elisp), "Should not use path mode for plain buffer name");
+  assert(!usesGetBufferCreate(elisp), "Should not use get-buffer-create for plain name");
+  assert(usesRelativeFileFallback(elisp), "Should use find-file-noselect ./ for plain name");
+  assert(elisp.includes('"./my-notes"'), "Should prepend ./ to the name");
+});
+
+test("buildReadElisp - plain buffer name with hyphen uses relative file fallback", () => {
+  const elisp = buildReadElisp("my-buffer");
+  assert(usesRelativeFileFallback(elisp), "Hyphenated name should use ./ fallback");
+  assert(elisp.includes('"./my-buffer"'), "Should use ./my-buffer");
+});
+
+test("buildWriteElisp - absolute path treated as path", () => {
+  const elisp = buildWriteElisp("/tmp/test.txt", "hello");
+  assert(usesPathMode(elisp), "Should use find-buffer-visiting for absolute paths");
+});
+
+test("buildWriteElisp - ./ relative path treated as path", () => {
+  const elisp = buildWriteElisp("./notes.txt", "content");
+  assert(usesPathMode(elisp), "Should use find-buffer-visiting for ./ path");
+});
+
+test("buildWriteElisp - ../ relative path treated as path", () => {
+  const elisp = buildWriteElisp("../README.md", "content");
+  assert(usesPathMode(elisp), "Should use find-buffer-visiting for ../ path");
+});
+
+test("buildWriteElisp - *temp* buffer uses get-buffer-create (no file)", () => {
+  const elisp = buildWriteElisp("*scratch*", "content");
+  assert(usesGetBufferCreate(elisp), "Should use get-buffer-create for *scratch*");
+  assert(!usesRelativeFileFallback(elisp), "Should NOT use relative file fallback");
+});
+
+test("buildWriteElisp - plain buffer name uses relative file fallback", () => {
+  const elisp = buildWriteElisp("my-notes", "content");
+  assert(!usesGetBufferCreate(elisp), "Should not use get-buffer-create for plain name");
+  assert(usesRelativeFileFallback(elisp), "Should use find-file-noselect ./ for plain name");
+  assert(elisp.includes('"./my-notes"'), "Should prepend ./ to the name");
+});
+
+test("buildWriteElisp - name with internal slash treated as buffer (not path)", () => {
+  const elisp = buildWriteElisp("some/buffer", "content");
+  assert(!usesPathMode(elisp), "Should NOT use path mode for 'some/buffer'");
+  assert(usesGetBufferCreate(elisp), "Should use get-buffer-create (/ is special char)");
+});
+
+test("buildWriteElisp - save uses (when (buffer-file-name) (save-buffer))", () => {
+  const elisp = buildWriteElisp("myfile", "content", { save: true });
+  assert(elisp.includes('buffer-file-name'), "Save should check buffer-file-name");
+  assert(elisp.includes('save-buffer'), "Should call save-buffer");
+});
+
+test("buildWriteElisp - save=false omits save-buffer", () => {
+  const elisp = buildWriteElisp("myfile", "content", { save: false });
+  assert(!elisp.includes('save-buffer'), "Should not call save-buffer when save=false");
 });
 
 // ---------------------------------------------------------------------------

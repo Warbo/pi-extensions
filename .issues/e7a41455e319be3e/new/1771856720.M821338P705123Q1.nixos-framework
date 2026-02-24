@@ -1,8 +1,9 @@
 From: Chris Warburton
 Date: Mon, 23 Feb 2026 14:16:03 +0000
-State: new
+State: resolved
 Subject: emacsclient: make buffer/path guessing stricter
 Message-Id: <e7a41455e319be3e-0-artemis@nixos-framework>
+resolution: fixed
 
 We might have buffers with slashes in their name, which makes our "/ == path"
 rule too expansive.
