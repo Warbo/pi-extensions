@@ -1,0 +1,30 @@
+From: Chris Warburton
+Date: Mon, 23 Feb 2026 14:16:03 +0000
+State: new
+Subject: emacsclient: make buffer/path guessing stricter
+Message-Id: <e7a41455e319be3e-0-artemis@nixos-framework>
+
+We might have buffers with slashes in their name, which makes our "/ == path"
+rule too expansive.
+
+Instead, we should restrict ourselves to the following:
+
+ - Leading '/' for absolute paths
+ - Leading './' or '../' for relative paths
+ - Anything else is a buffer name
+
+If we treat the given name as a buffer name, and there IS NOT an existing buffer
+with that name, then we open a new buffer. In that case, we should also check
+the given name again:
+
+ - If the given name contains weird punctuation '/', '*', '<', '>', then the
+   newly opened buffer will NOT be associated to any file path
+ - If the given name DOES NOT contain such punctuation, then the newly opened
+   buffer WILL be associated to a file path (as if it were preceded by ./)
+
+Update the docs to reflect this. Mention using '*' when naming a temp buffer.
+
+We should also make sure that 'write' only tries to save buffers if they have an
+associated file path (not sure if it does already).
+
+All these cases need tests too!

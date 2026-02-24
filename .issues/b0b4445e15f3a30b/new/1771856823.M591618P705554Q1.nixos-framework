@@ -1,0 +1,9 @@
+From: Chris Warburton
+Date: Mon, 23 Feb 2026 14:25:22 +0000
+State: new
+Subject: emacsclient: read should always return unsave and outdated
+Message-Id: <b0b4445e15f3a30b-0-artemis@nixos-framework>
+
+We cache buffer metadata to avoid sending it over and over to the LLM. However,
+I think the 'unsaved' and 'outdated' fields should be sent every time, to stop
+the LLM getting confused about whether it saved its changes or not.
