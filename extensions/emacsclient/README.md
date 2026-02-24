@@ -147,7 +147,7 @@ List all open Emacs buffers with metadata.
 **Returns:** Array of buffer information:
 - `name`: Buffer name
 - `filepath`: Associated file path (if any)
-- `modified`: Whether buffer has unsaved changes
+- `unsaved`: Whether buffer has unsaved changes
 - `majorMode`: Major mode (e.g., "python-mode")
 - `size`: Buffer size in characters
 - `visible`: Whether buffer is currently visible

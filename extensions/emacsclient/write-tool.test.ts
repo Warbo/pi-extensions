@@ -179,10 +179,10 @@ test("buildWriteElisp - save false does not save", () => {
   assert(!result.includes("save-buffer") || result.includes("when.*save-buffer"),
     "Should not unconditionally save");
 });
-test("buildWriteElisp - save default does not save", () => {
+test("buildWriteElisp - save default saves when buffer has file", () => {
   const result = buildWriteElisp("test.txt", "hello");
-  assert(!result.includes("save-buffer") || result.includes("when.*save-buffer"),
-    "Should not save by default");
+  assert(result.includes("save-buffer"), "Should save by default");
+  assert(result.includes("buffer-file-name"), "Save should be conditional on buffer having a file");
 });
 
 // ---------------------------------------------------------------------------
