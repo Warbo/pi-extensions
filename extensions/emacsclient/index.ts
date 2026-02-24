@@ -45,18 +45,25 @@ export default function (pi: ExtensionAPI) {
     const result: Record<string, unknown> = {};
     let hasChanges = false;
 
-    // Always include content-related fields
+    // Always include content-related fields and important state fields
     if ('got' in fullData) {
       result.got = fullData.got;
     }
     if ('content' in fullData) {
       result.content = fullData.content;
     }
+    // Always include unsaved and outdated to prevent LLM confusion about buffer state
+    if ('unsaved' in fullData) {
+      result.unsaved = fullData.unsaved;
+    }
+    if ('outdated' in fullData) {
+      result.outdated = fullData.outdated;
+    }
 
     // Compare metadata fields and include only changes
     for (const key of Object.keys(fullData)) {
-      // Skip content fields (already handled above)
-      if (key === 'got' || key === 'content') continue;
+      // Skip fields already handled above
+      if (key === 'got' || key === 'content' || key === 'unsaved' || key === 'outdated') continue;
 
       const currentValue = fullData[key];
       const cachedValue = cached[key];
