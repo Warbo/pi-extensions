@@ -1,0 +1,20 @@
+From: Chris Warburton
+Date: Wed, 25 Feb 2026 12:04:01 +0000
+State: new
+Subject: emacsclient: Example is wrong about point movement
+Message-Id: <b2ec768de0debb8d-0-artemis@nixos-framework>
+
+The README for the emacsclient extension currenly has this example:
+
+```
+// Read first 1000 characters of a file (also moves point)
+read({ name: "./src/main.ts", pos: 1, length: 1000 })
+// Read subsequent 1000 characters from that file (starts at point)
+read({ name: "./src/main.ts", length: 1000 })
+```
+
+However, we will only move point to the *start* of the read (position 1); it
+won't move to the end, as if we're seeking a file handle.
+
+Perhaps we should? (It's not ambiguous, since the position of point will appear
+in the result either way; it's just an incorrect example)

@@ -61,16 +61,16 @@ Read the content and metadata of a file or Emacs buffer.
 
 **Example:**
 ```typescript
-// Read first 1000 characters of a file (also moves point)
+// Read first 1000 characters of a file (also moves point to start of buffer)
 read({ name: "./src/main.ts", pos: 1, length: 1000 })
-// Read subsequent 1000 characters from that file (starts at point)
-read({ name: "./src/main.ts", length: 1000 })
+// Read subsequent 1000 characters from that file (moves point to position 1001)
+read({ name: "./src/main.ts", pos: 1001, length: 1000 })
 
-// Read 50 lines starting from line 100
-read({ name: "./main.ts", line: 100, lines: 50 })
+// Read 50 lines starting from line 100, without moving point
+read({ name: "./main.ts", line: 100, lines: 50, temp: true })
 
-// Peek at a file without affecting Emacs state
-read({ name: "./config.json", temp: true })
+// Peek at file contents, closing the buffer if it wasn't already open
+read({ name: "./config.json", pos: 1, temp: true })
 
 // Read within a span from a previous read
 read({ name: "./config.json", span: "span-id-from-previous-read" })
@@ -197,6 +197,12 @@ emacs_ts_query({
   lang: "typescript"
 })
 ```
+
+## Spans
+
+Support is being added for "spans", as a way for Emacs to control and guide the agent's reads and edits. This is currently a work in progress, so no actual spans will be returned yet.
+
+The idea is for Emacs to calculate meaningful regions of a buffer, e.g. a function definition for a programming mode, or the output of a command in a shell mode, or a section in a document mode, etc. and include a selection of them in its responses (as a key/value mapping from IDs to brief descriptions). The LLM can optionally use those span IDs in subsequent calls, to e.g. edit a function definition, or read the output of a command, etc. A key idea is for IDs to [include a short hash of the existing content](https://blog.can.ac/2026/02/12/the-harness-problem/), so that edits will fail if the content has subsequently changed (since the ID based on the old content won't appear any more).
 
 ## Use Cases
 
