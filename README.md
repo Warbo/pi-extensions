@@ -36,4 +36,4 @@ nix-build -A bash-permission-wrapper
 
 ## License
 
-MIT
+Public domain
