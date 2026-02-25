@@ -2,6 +2,12 @@
 
 A Pi extension that enables direct interaction with a running Emacs session. Instead of editing files on disk, Pi can read and manipulate Emacs buffers in-memory, query buffer state, and perform syntax-aware operations using Emacs's built-in Tree-sitter support.
 
+Complements the
+[`pi-coding-agent` Emacs package](https://github.com/dnouri/pi-coding-agent).
+With a little Emacs Lisp (possibly vibe-coded), these can be combined in
+powerful ways; e.g. binding a hotkey which sends Pi a message like
+`Read whats at point in buffer 'foo' and action any request/issue/question`.
+
 ## Features
 
 - **Direct buffer access**: Read and query Emacs buffers without touching the filesystem
@@ -23,15 +29,6 @@ emacs --daemon
 M-x server-start
 ```
 
-## Installation
-
-1. Copy this directory to your pi extensions folder:
-   ```bash
-   cp -r extensions/emacsclient ~/.config/pi/extensions/
-   ```
-
-2. Enable the extension in your pi configuration (if not auto-loaded)
-
 ## Configuration
 
 By default, the extension connects to your default Emacs server socket. To use a custom socket:
@@ -40,7 +37,7 @@ By default, the extension connects to your default Emacs server socket. To use a
 export EMACS_SOCKET_NAME=/path/to/socket
 ```
 
-For testing, you can override the emacsclient binary:
+For testing, you can override the `emacsclient` binary:
 ```bash
 export EMACSCLIENT_BINARY=/custom/path/to/emacsclient
 ```
@@ -51,14 +48,14 @@ export EMACSCLIENT_BINARY=/custom/path/to/emacsclient
 Read the content and metadata of a file or Emacs buffer.
 
 **Parameters:**
-- `name` (required): Path if it starts with `/` (absolute) or `./`/`../` (relative); otherwise a buffer name. If no buffer with that name exists: names with special chars (`*`, `/`, `<`, `>`) create a bare buffer with no file association (use `*name*` for temp buffers); plain names open/create a file as if preceded by `./`. Supports TRAMP paths.
-- `pos` (optional): Character position to start reading (1-indexed, or negative for relative to point)
-- `line` (optional): Line number to start reading
+- `name` (required): Path if it starts with `/` (absolute), or `./` or `../` (relative); otherwise a buffer name. If no buffer with that name exists: names with special chars (`*`, `/`, `<`, `>`) create a bare buffer with no file association (following `*name*` convention for temp buffers); plain names open/create a file as if preceded by `./`. Supports TRAMP paths.
+- `pos` (optional): Character position to start reading: 0 for point (default), positive for 1-indexed buffer position, or negative to read backwards from point.
+- `line` (optional): Line number to start reading (same 0, positive, negative semantics as `pos`)
 - `col` (optional): Column number (used with `line`)
-- `length` (optional): Maximum characters to read (default: 51200)
+- `length` (optional): Maximum characters to read (default: 51200, which is the upper limit)
 - `lines` (optional): Maximum lines to read
 - `span` (optional): Narrow to a span ID (result of a previous read)
-- `temp` (optional): If true, don't modify Emacs state (default: false)
+- `temp` (optional): If true, restore Emacs state afterwards - killing new buffers, restoring point in existing buffers (default: false)
 
 **Returns:** Buffer content, metadata (major mode, size, point position, etc.)
 
@@ -79,17 +76,21 @@ read({ name: "./config.json", temp: true })
 read({ name: "./config.json", span: "span-id-from-previous-read" })
 ```
 
+After the first `read`, only changed metadata is returned (to save tokens);
+*except* for `unsaved` (buffer is modified) and `outdated` (file on disk is
+modified), since those are important when mixing `read`/`write` with `bash`.
+
 ### `write`
-Insert text into Emacs buffer at a specific position, and optionally type a key sequence. Can create new files/buffers, move point, insert content, type keys, and save.
+Insert text into Emacs buffer at a specific position, and optionally type a key sequence. Can create new files/buffers, move point, insert content, type keys, and save. Since writing is destructive, ambiguous/conflicting options give an *error*.
 
 **Parameters:**
-- `name` (required): Path if it starts with `/` (absolute) or `./`/`../` (relative); otherwise a buffer name. If no buffer with that name exists: names with special chars (`*`, `/`, `<`, `>`) create a bare buffer with no file association (use `*name*` for temp buffers); plain names open/create a file as if preceded by `./`. Supports TRAMP paths.
+- `name` (required): Path if it starts with `/` (absolute), or `./` or /`../` (relative); otherwise a buffer name. If no buffer with that name exists: names with special chars (`*`, `/`, `<`, `>`) create a bare buffer with no file association (use `*name*` for temp buffers); plain names open/create a file as if preceded by `./`. Supports TRAMP paths.
 - `insert` (optional): Text to insert at the specified position
-- `pos` (optional): Position to insert at (1-indexed, or negative for relative to end). Conflicts with `line`, `point`, `replace`
-- `line` (optional): Line number to insert at (1-indexed, or negative for relative to end). Conflicts with `pos`, `point`, `replace`
-- `point` (optional): If true, insert at point (start of file if newly opened). Default when no `pos` or `line` given. Conflicts with those
-- `type` (optional): Keyboard macro to type in buffer (via 'kbd'). Runs after insert and before save
-- `replace` (optional): If true, clear buffer contents before inserting. Makes `point`, `pos`, `line` meaningless
+- `pos` (optional): Position to insert at; 0 = point (default), positive for 1-indexed buffer position, or negative to count back from end of buffer. Conflicts with `line`, `point`, `replace`
+- `line` (optional): Line number to insert at (1-indexed, or negative for relative to end). Conflicts with `pos`, `point`, `replace`.
+- `point` (optional): If true, insert at point (start of file if newly opened). Default when no `pos` or `line` given. Conflicts with those.
+- `type` (optional): Keyboard macro to type in buffer (via 'kbd'). Runs after insert and before save.
+- `replace` (optional): If true, clear buffer contents before inserting. Makes `point`/`pos`/`line` meaningless.
 - `save` (optional): If buffer is backed by a file, save it after inserting. Creates parent directories if needed (default: true)
 - `temp` (optional): If true, restore Emacs state afterwards - killing new buffers, restoring point in existing buffers (default: false)
 
@@ -97,16 +98,16 @@ Insert text into Emacs buffer at a specific position, and optionally type a key 
 
 **Example:**
 ```typescript
-// Insert text at the beginning of a file
+// Insert text at the beginning of a file and save
 write({ name: "./README.md", insert: "# Title\n\n", pos: 1 })
 
-// Append text to a buffer
+// Append text to a buffer and save
 write({ name: "notes", insert: "\nNew note", pos: -1 })
 
-// Insert at current point and save
-write({ name: "./src/main.ts", insert: "// TODO: review\n", point: true, save: true })
+// Insert at current point without saving
+write({ name: "./src/main.ts", insert: "// TODO: review\n", point: true, save: false })
 
-// Create a new file with content
+// Create or overwrite a file with given content
 write({ name: "./newfile.txt", insert: "Hello, world!", replace: true })
 
 // Replace entire buffer content (use *name* for a bare buffer with no file association)
@@ -137,6 +138,9 @@ emacs_eval({ expression: "(mapcar #'buffer-name (buffer-list))" })
 
 // Get value of a variable
 emacs_eval({ expression: "default-directory" })
+
+// Browse the Web
+emacs_eval({ expression: "(eww \"http://chriswarbo.net\")"})
 ```
 
 ### `emacs_list_buffers`
@@ -197,7 +201,7 @@ emacs_ts_query({
 ## Use Cases
 
 ### Avoiding Buffer Conflicts
-Reading Emacs buffers ensures unsaved changes are seen; editing Emacs buffers avoids conflicting changes.
+Reading Emacs buffers ensures unsaved changes are seen; writing to Emacs buffers avoids conflicting changes.
 
 ### Syntax-Aware Refactoring
 Use Tree-sitter queries to find and modify code structures precisely:
