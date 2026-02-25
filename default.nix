@@ -69,7 +69,14 @@ with rec {
 };
 rec {
   all = pkgs.writeText "pi-all-extensions" (
-    pkgs.lib.concatMapStringsSep "\n" (e: "${e}") (attrValues extensions)
+    pkgs.lib.concatMapStringsSep "\n" (e: "${e}") (
+      attrValues (
+        extensions
+        // {
+          inherit SYSTEM;
+        }
+      )
+    )
   );
 
   extensions = mapAttrs (name: _: make-extension name) (readDir ./extensions);
